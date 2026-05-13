@@ -38,9 +38,10 @@ export function registerStartHandler(bot, { config }) {
   
   // /help command
   bot.command('help', async (ctx) => {
-    const { poolService, sessionService } = ctx.session;
+    const userId = ctx.from.id;
+    const isAdmin = [746661594].includes(userId);
     
-    await ctx.reply(`*📖 Help*
+    let helpText = `*📖 Help*
 
 *Commands:*
 /start — Mulai cari chat random
@@ -50,13 +51,24 @@ export function registerStartHandler(bot, { config }) {
 /myprofile — Lihat profil
 /stats — Lihat statistik bot
 
+*Fitur:*
+📸 *Phantom Photo* — Foto auto-delete 10 detik
+🚫 Screenshot/Share = Banned
+
 *Fitur Premium (Telegram Stars):*
 • 🔞 18+ Mode — Chat dengan user dewasa
-• 👫 Same Gender — Chat dengan gender sama
 
-_Beli Stars di Settings > Stars_`,
-      { parse_mode: 'Markdown' }
-    );
+_Beli Stars di Settings > Stars_`;
+
+    // Add admin commands if user is admin
+    if (isAdmin) {
+      helpText += `\n\n*👑 Admin Commands:*
+/adminphotos [n] — Lihat n foto terbaru
+/admindb — Download database file
+/adminquery [SQL] — Query database`;
+    }
+    
+    await ctx.reply(helpText, { parse_mode: 'Markdown' });
   });
   
   // /stats command

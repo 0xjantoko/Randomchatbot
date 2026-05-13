@@ -44,6 +44,9 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
       const preference = parts[2];
       if (action === 'buy') await handlePayment(ctx, preference);
       else if (action === 'verify') await handlePaymentVerify(ctx, preference);
+    } else if (data.startsWith('gender_pref:')) {
+      const genderPref = data.split(':')[1];
+      await handleGenderPrefSelected(ctx, genderPref);
     } else if (data.startsWith('preference:')) {
       const preference = data.split(':')[1];
       if (preference === 'back') await showPreferenceSelection(ctx);
@@ -57,19 +60,33 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
   
   async function handleAge(ctx, text) {
     const age = parseInt(text);
-    if (isNaN(age) || age < 18 || age > 99) {
-      await ctx.reply('❌ Minimal 18 tahun. Ketik angka valid:');
+    if (isNaN(age) || age < 1 || age > 99) {
+      await ctx.reply('❌ Ketik angka valid (1-99):');
       return;
     }
+    
+    // Check if under 18
+    ctx.session.isUnderage = age < 18;
     
     ctx.session.age = age;
     ctx.session.step = 'gender';
     ctx.session.state = 'onboarding_gender';
     
-    await ctx.reply('*Pilih gender:*', {
-      parse_mode: 'Markdown',
-      reply_markup: genderKeyboard
-    });
+    // Different welcome for underage
+    if (ctx.session.isUnderage) {
+      await ctx.reply(
+        `*👋 Welcome!*\n\n` +
+        `Usia kamu: ${age} tahun\n` +
+        `🔒 Kamu akan menggunakan mode *Random* (acak) saja.\n\n` +
+        `*Pilih gender:*`,
+        { parse_mode: 'Markdown', reply_markup: genderKeyboard }
+      );
+    } else {
+      await ctx.reply('*Pilih gender:*', {
+        parse_mode: 'Markdown',
+        reply_markup: genderKeyboard
+      });
+    }
   }
   
   async function handleGender(ctx, text) {
@@ -113,21 +130,47 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
   
   async function showPreferenceSelection(ctx, errorMsg = '') {
     const unlocked = ctx.session.unlocked || [];
+    const isUnderage = ctx.session.isUnderage;
     
     const prefKeys = new InlineKeyboard();
     prefKeys.text('🎲 Random (Gratis)', 'preference:random');
-    prefKeys.row();
-    prefKeys.text('🔞 18+ (⭐ 50)', unlocked.includes('18+') ? 'preference:18+' : 'premium_select:18+');
-    prefKeys.row();
-    prefKeys.text('👫 Same (⭐ 30)', unlocked.includes('same') ? 'preference:same' : 'premium_select:same');
     
-    const msg = errorMsg ? `*${errorMsg}*\n\n*Pilih preferensi:*` : '*Pilih preferensi:*';
-    await ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: prefKeys });
+    // Only show 18+ for users 18+
+    if (!isUnderage) {
+      prefKeys.row();
+      prefKeys.text('🔞 18+ (⭐ 50)', unlocked.includes('18+') ? 'preference:18+' : 'premium_select:18+');
+    }
+    
+    let msg = '*Pilih preferensi:*';
+    if (isUnderage) {
+      msg = '*🔒 Kamu berusia di bawah 18*\n\nHanya mode Random yang tersedia.\n\n*Pilih preferensi:*';
+    }
+    
+    const finalMsg = errorMsg ? `*${errorMsg}*\n\n${isUnderage ? 'Hanya Random tersedia.' : ''}*Pilih preferensi:*` : msg;
+    await ctx.reply(finalMsg, { parse_mode: 'Markdown', reply_markup: prefKeys });
+  }
+  
+  async function showGenderPrefSelection(ctx) {
+    const genderPrefKeys = new InlineKeyboard();
+    genderPrefKeys.text('👩 Female', 'gender_pref:F');
+    genderPrefKeys.text('👨 Male', 'gender_pref:M');
+    genderPrefKeys.row();
+    genderPrefKeys.text('🌈 Semua Gender', 'gender_pref:all');
+    
+    await ctx.editMessageText(
+      `*👄 Pilih gender partner untuk 18+:*\n\nSiapa yang ingin kamu chat?`,
+      { parse_mode: 'Markdown', reply_markup: genderPrefKeys }
+    );
   }
   
   async function handlePremiumSelect(ctx, preference) {
     const unlocked = ctx.session.unlocked || [];
     if (unlocked.includes(preference)) {
+      // Already unlocked, go to gender preference for 18+
+      if (preference === '18+') {
+        await showGenderPrefSelection(ctx);
+        return;
+      }
       await showPreferenceSelection(ctx);
       return;
     }
@@ -166,6 +209,16 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
     if (!ctx.session.unlocked) ctx.session.unlocked = [];
     ctx.session.unlocked.push(preference);
     
+    // If 18+, ask for gender preference after unlock
+    if (preference === '18+') {
+      await ctx.editMessageText(
+        `*✅ Berhasil di-unlock!*\n\n${feature.name} aktif!`,
+        { parse_mode: 'Markdown' }
+      );
+      await showGenderPrefSelection(ctx);
+      return;
+    }
+    
     await ctx.editMessageText(
       `*✅ Berhasil di-unlock!*\n\n${feature.name} aktif!\n\nSilakan pilih preferensi:`,
       { parse_mode: 'Markdown' }
@@ -173,11 +226,24 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
     await showPreferenceSelection(ctx);
   }
   
+  async function handleGenderPrefSelected(ctx, genderPref) {
+    ctx.session.gender_pref = genderPref;
+    
+    // Now proceed with preference selection
+    const preference = '18+';
+    await handlePreferenceSelected(ctx, preference);
+  }
+  
   async function handlePreferenceSelected(ctx, preference) {
     const userId = ctx.from.id;
     
     let genderPrefs = ['M', 'F', 'O'];
-    if (preference === 'same') genderPrefs = [ctx.session.gender];
+    const genderPref = ctx.session.gender_pref;
+    
+    // Custom gender preference for 18+ mode
+    if (preference === '18+' && genderPref && genderPref !== 'all') {
+      genderPrefs = [genderPref];
+    }
     
     const user = {
       user_id: userId,

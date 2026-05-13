@@ -18,13 +18,11 @@ export default {
   
   // Telegram Stars Pricing
   STAR_PRICES: {
-    '18+': parseInt(process.env.STAR_PRICE_18 || '50'),
-    'same': parseInt(process.env.STAR_PRICE_SAME || '30')
+    '18+': parseInt(process.env.STAR_PRICE_18 || '50')
   },
   
   PREMIUM_FEATURES: {
-    '18+': { name: '🔞 18+ Mode', price: 50 },
-    'same': { name: '👫 Same Gender', price: 30 }
+    '18+': { name: '🔞 18+ Mode', price: 50 }
   },
   
   // Privacy Settings
@@ -47,8 +45,6 @@ export default {
 
 Saya akan mencarikanmu teman chat secara random!
 🔒 Privasi kamu terjamin - identitas disamarkan.
-
-⚠️ Minimal usia 18 tahun.
 
 *Berapa usia kamu?*`,
   
@@ -85,7 +81,6 @@ Ketik /start untuk cari chat baru.`,
   
   PREFERENCE_OPTIONS: {
     'random': '🎲 Random — Gratis!',
-    '18+': '🔞 18+ Only — ⭐ 50 Stars',
-    'same': '👫 Same Gender — ⭐ 30 Stars'
+    '18+': '🔞 18+ Only — ⭐ 50 Stars'
   }
 };

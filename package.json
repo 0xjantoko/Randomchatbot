@@ -9,8 +9,9 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "grammy": "^1.25.0",
-    "dotenv": "^16.4.0"
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.0",
+    "grammy": "^1.25.0"
   },
   "engines": {
     "node": ">=18.0.0"

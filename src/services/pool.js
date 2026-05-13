@@ -89,9 +89,6 @@ export class PoolService {
     if (userA.preference === '18+' || userB.preference === '18+') {
       return userA.preference === '18+' && userB.preference === '18+';
     }
-    if (userA.preference === 'same' || userB.preference === 'same') {
-      return userA.gender === userB.gender;
-    }
     return true;
   }
   

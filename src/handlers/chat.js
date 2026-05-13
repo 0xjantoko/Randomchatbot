@@ -1,6 +1,8 @@
 /**
  * Chat handlers — Message forwarding and session management
  */
+import { checkViolation, isBanned } from './media.js';
+import { metrics, logger } from '../admin/index.js';
 
 export function registerChatHandlers(bot, { sessionService }) {
   // Forward all text messages to partner
@@ -11,6 +13,12 @@ export function registerChatHandlers(bot, { sessionService }) {
     // Skip commands
     if (text.startsWith('/')) return;
     
+    // Check if banned
+    if (isBanned(userId)) {
+      await ctx.reply('❌ Akun kamu telah dibanned. Hubungi admin.');
+      return;
+    }
+    
     // Check if in session
     if (!sessionService.isInSession(userId)) {
       return; // Let other handlers deal with non-session users
@@ -19,8 +27,33 @@ export function registerChatHandlers(bot, { sessionService }) {
     const partnerId = sessionService.getPartner(userId);
     if (!partnerId) return;
     
+    // Check for violations
+    const violations = checkViolation(userId, text, 'text');
+    
+    // If banned due to violation, stop
+    if (isBanned(userId)) {
+      await ctx.reply('❌ Akun kamu telah dibanned karena pelanggaran.');
+      return;
+    }
+    
+    // Send warning if there were violations (but not banned yet)
+    if (violations.length > 0) {
+      try {
+        await ctx.reply(
+          `⚠️ *Peringatan:* Pesan kamu melanggar aturan.\n\n` +
+          `Pelanggaran: ${violations.map(v => v.reason).join(', ')}\n\n` +
+          `Jika berlanjut, akun akan dibanned.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (e) {}
+    }
+    
     // Update activity
     sessionService.updateActivity(userId);
+    
+    // Track metrics
+    metrics.incMessage();
+    logger.metric('message', { from: userId, to: partnerId, length: text.length });
     
     // Forward to partner
     try {
@@ -40,6 +73,10 @@ export function registerChatHandlers(bot, { sessionService }) {
     }
     
     const { session, partnerId } = await sessionService.endSession(userId, 'skip');
+    
+    // Track metrics
+    metrics.incSessionEnd();
+    logger.info('session_end', { userId, reason: 'skip' });
     
     await ctx.reply('*👋 Keluar dari chat.*\n\nKetik /start untuk cari chat baru.',
       { parse_mode: 'Markdown' }
@@ -70,6 +107,10 @@ export function registerChatHandlers(bot, { sessionService }) {
     const reason = args || 'Tidak disebutkan';
     
     const { partnerId } = await sessionService.endSession(userId, 'report');
+    
+    // Log report
+    logger.warn('report', { reporter: userId, reported: partnerId, reason });
+    metrics.incViolation();
     
     await ctx.reply(`*✅ Laporan dikirim.*\n\nPartner telah dilaporkan karena: ${reason}`,
       { parse_mode: 'Markdown' }

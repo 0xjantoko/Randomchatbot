@@ -3,6 +3,11 @@ import config from './config.js';
 import { registerHandlers } from './handlers/index.js';
 import { PoolService } from './services/pool.js';
 import { SessionService } from './services/session.js';
+import { initDatabase } from './database/db.js';
+import { startAdminServer, metrics, logger } from './admin/index.js';
+
+// Initialize database
+initDatabase();
 
 // Initialize bot
 const bot = new Bot(config.BOT_TOKEN);
@@ -27,6 +32,9 @@ bot.catch((err) => {
 console.log('🤖 Starting RandomChatbot...');
 await bot.start();
 console.log('✅ Bot is running!');
+
+// Start admin server
+startAdminServer();
 
 // Graceful shutdown
 process.on('SIGINT', async () => {

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RandomChat Admin Panel</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    
+    .header {
+      background: #1e293b;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 { font-size: 1.5rem; color: #38bdf8; }
+    .header .status { 
+      display: flex; 
+      align-items: center; 
+      gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #22c55e;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .container {
+      padding: 2rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    
+    .stat-card {
+      background: #1e293b;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      border: 1px solid #334155;
+    }
+    .stat-card .label {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-top: 0.25rem;
+    }
+    .stat-card.warning .value { color: #f59e0b; }
+    .stat-card.danger .value { color: #ef4444; }
+    .stat-card.success .value { color: #22c55e; }
+    
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    
+    .chart-card {
+      background: #1e293b;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      border: 1px solid #334155;
+    }
+    .chart-card h3 {
+      font-size: 1rem;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+    .chart-card canvas {
+      max-height: 200px;
+    }
+    
+    .table-card {
+      background: #1e293b;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      border: 1px solid #334155;
+      margin-bottom: 2rem;
+    }
+    .table-card h3 {
+      font-size: 1rem;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+    }
+    th {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+    }
+    td { font-size: 0.875rem; }
+    .badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .badge.warning { background: #f59e0b20; color: #f59e0b; }
+    .badge.danger { background: #ef444420; color: #ef4444; }
+    .badge.success { background: #22c55e20; color: #22c55e; }
+    
+    .refresh-btn {
+      background: #38bdf8;
+      color: #0f172a;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .refresh-btn:hover { background: #0ea5e9; }
+    
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .tab {
+      padding: 0.5rem 1rem;
+      background: #334155;
+      border: none;
+      color: #94a3b8;
+      border-radius: 0.5rem;
+      cursor: pointer;
+    }
+    .tab.active {
+      background: #38bdf8;
+      color: #0f172a;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎲 RandomChat Admin</h1>
+    <div class="status">
+      <span class="status-dot"></span>
+      <span id="uptime">Loading...</span>
+    </div>
+  </div>
+  
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat-card success">
+        <div class="label">Online Users</div>
+        <div class="value" id="users-online">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Messages/min</div>
+        <div class="value" id="msg-per-min">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Photos Sent</div>
+        <div class="value" id="photos-total">-</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="label">Violations</div>
+        <div class="value" id="violations">-</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="label">Total Bans</div>
+        <div class="value" id="bans-total">-</div>
+      </div>
+      <div class="stat-card success">
+        <div class="label">Sessions</div>
+        <div class="value" id="sessions">-</div>
+      </div>
+    </div>
+    
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>📊 Messages per Minute</h3>
+        <canvas id="msgChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>📈 Online Users</h3>
+        <canvas id="usersChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>⚠️ Violations & Bans</h3>
+        <canvas id="violChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>📸 Media Stats</h3>
+        <canvas id="mediaChart"></canvas>
+      </div>
+    </div>
+    
+    <div class="table-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3>📋 Recent Activity</h3>
+        <button class="refresh-btn" onclick="refreshData()">🔄 Refresh</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Details</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="activity-table">
+          <tr><td colspan="4">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // Chart instances
+    let msgChart, usersChart, violChart, mediaChart;
+    
+    // Initialize charts
+    function initCharts() {
+      const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            grid: { color: '#334155' },
+            ticks: { color: '#94a3b8' }
+          },
+          y: {
+            grid: { color: '#334155' },
+            ticks: { color: '#94a3b8' }
+          }
+        }
+      };
+      
+      msgChart = new Chart(document.getElementById('msgChart'), {
+        type: 'line',
+        data: { labels: [], datasets: [{ data: [], borderColor: '#38bdf8', backgroundColor: '#38bdf820', fill: true }] },
+        options: chartOptions
+      });
+      
+      usersChart = new Chart(document.getElementById('usersChart'), {
+        type: 'line',
+        data: { labels: [], datasets: [{ data: [], borderColor: '#22c55e', backgroundColor: '#22c55e20', fill: true }] },
+        options: chartOptions
+      });
+      
+      violChart = new Chart(document.getElementById('violChart'), {
+        type: 'bar',
+        data: { labels: ['Warnings', 'Violations', 'Bans'], datasets: [{ data: [0, 0, 0], backgroundColor: ['#f59e0b', '#ef4444', '#dc2626'] }] },
+        options: { ...chartOptions, indexAxis: 'y' }
+      });
+      
+      mediaChart = new Chart(document.getElementById('mediaChart'), {
+        type: 'doughnut',
+        data: { labels: ['Photos', 'Voice'], datasets: [{ data: [0, 0], backgroundColor: ['#38bdf8', '#a855f7'] }] },
+        options: { plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
+      });
+    }
+    
+    // Fetch data from API
+    async function refreshData() {
+      try {
+        const res = await fetch('/admin/api/metrics');
+        const data = await res.json();
+        
+        // Update stats
+        document.getElementById('users-online').textContent = data.current.users_online || 0;
+        document.getElementById('msg-per-min').textContent = data.current.messages_per_sec || 0;
+        document.getElementById('photos-total').textContent = data.current.photos_total || 0;
+        document.getElementById('violations').textContent = data.current.violations_total || 0;
+        document.getElementById('bans-total').textContent = data.current.bans_total || 0;
+        document.getElementById('sessions').textContent = data.current.sessions_started || 0;
+        document.getElementById('uptime').textContent = `Uptime: ${Math.floor(data.uptime_hours)}h`;
+        
+        // Update charts
+        const history = data.history || [];
+        const labels = history.map((_, i) => `${i + 1}m`);
+        
+        msgChart.data.labels = labels;
+        msgChart.data.datasets[0].data = history.map(h => h.messages_per_sec || 0);
+        msgChart.update();
+        
+        usersChart.data.labels = labels;
+        usersChart.data.datasets[0].data = history.map(h => h.users_online || 0);
+        usersChart.update();
+        
+        violChart.data.datasets[0].data = [
+          data.current.warnings_issued || 0,
+          data.current.violations_total || 0,
+          data.current.bans_total || 0
+        ];
+        violChart.update();
+        
+        mediaChart.data.datasets[0].data = [
+          data.current.photos_total || 0,
+          data.current.voice_total || 0
+        ];
+        mediaChart.update();
+        
+        // Update table (mock data for now)
+        updateActivityTable(data);
+        
+      } catch (e) {
+        console.error('Failed to fetch metrics:', e);
+      }
+    }
+    
+    function updateActivityTable(data) {
+      const tbody = document.getElementById('activity-table');
+      const activities = [
+        { time: new Date().toLocaleTimeString(), type: 'Session', details: 'New session started', status: 'success' },
+        { time: new Date().toLocaleTimeString(), type: 'Metric', details: `${data.current.messages_total} messages processed`, status: 'success' },
+        { time: new Date().toLocaleTimeString(), type: 'Media', details: `${data.current.photos_total} photos sent`, status: 'success' }
+      ];
+      
+      tbody.innerHTML = activities.map(a => `
+        <tr>
+          <td>${a.time}</td>
+          <td>${a.type}</td>
+          <td>${a.details}</td>
+          <td><span class="badge ${a.status}">${a.status}</span></td>
+        </tr>
+      `).join('');
+    }
+    
+    // Auto-refresh every 10 seconds
+    initCharts();
+    refreshData();
+    setInterval(refreshData, 10000);
+  </script>
+</body>
+</html>
