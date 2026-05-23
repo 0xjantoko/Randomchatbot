@@ -1,10 +1,9 @@
 import { Keyboard, InlineKeyboard } from 'grammy';
 
-export function registerStartHandler(bot, { config }) {
+export function registerStartHandler(bot, { config, poolService, sessionService }) {
   // /start command
   bot.command('start', async (ctx) => {
     const userId = ctx.from.id;
-    const { poolService, sessionService } = ctx.session;
     
     // Check if already in session
     if (sessionService.isInSession(userId)) {
@@ -73,8 +72,6 @@ _Beli Stars di Settings > Stars_`;
   
   // /stats command
   bot.command('stats', async (ctx) => {
-    const { poolService, sessionService } = ctx.session;
-    
     await ctx.reply(`*📊 Stats*
 
 Waiting: ${poolService.getPoolSize()}
@@ -86,7 +83,6 @@ Active Sessions: ${sessionService.getActiveSessions()}`,
   // /cancel command
   bot.command('cancel', async (ctx) => {
     const userId = ctx.from.id;
-    const { poolService, sessionService } = ctx.session;
     
     if (poolService.isInPool(userId)) {
       await poolService.removeFromPool(userId);

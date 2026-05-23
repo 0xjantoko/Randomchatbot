@@ -4,7 +4,7 @@
  * Betting: who shares first, tells story first, etc.
  */
 
-import { isBanned } from '../database/db.js';
+import { bannedCache } from '../services/banned-cache.js';
 import { metrics, logger } from '../admin/index.js';
 
 // Emoji constants
@@ -35,7 +35,7 @@ export function registerSuitHandlers(bot, { sessionService }) {
     const args = ctx.message.text.split(' ').slice(1);
     
     // Check if banned
-    if (isBanned(userId)) {
+    if (bannedCache.isBanned(userId)) {
       await ctx.reply('❌ Akun kamu telah dibanned. Hubungi admin.');
       return;
     }
@@ -65,8 +65,16 @@ export function registerSuitHandlers(bot, { sessionService }) {
         player1: userId,
         player2: partnerId,
         status: 'waiting',
-        choices: {}
+        choices: {},
+        createdAt: Date.now()
       });
+      
+      // Auto-clean stale games after 5 minutes
+      setTimeout(() => {
+        if (activeGames.has(gameKey) && activeGames.get(gameKey).status === 'waiting') {
+          activeGames.delete(gameKey);
+        }
+      }, 300000);
       
       // Notify both players
       await ctx.reply(

@@ -106,20 +106,21 @@ app.get('/admin/health', (req, res) => {
 
 // Start server
 export function startAdminServer() {
-  // Don't start if already running (for hot reload)
-  try {
-    app.listen(ADMIN_PORT, () => {
-      console.log(`✅ Admin Panel: http://localhost:${ADMIN_PORT}/admin`);
-      console.log(`   API Key: ${ADMIN_API_KEY}`);
-      logger.info('admin', { message: 'Admin server started', port: ADMIN_PORT });
-    });
-  } catch (e) {
+  const server = app.listen(ADMIN_PORT, () => {
+    console.log(`✅ Admin Panel: http://localhost:${ADMIN_PORT}/admin`);
+    console.log(`   API Key: ${ADMIN_API_KEY}`);
+    logger.info('admin', { message: 'Admin server started', port: ADMIN_PORT });
+  });
+  
+  server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') {
       console.log(`⚠️ Admin server already running on port ${ADMIN_PORT}`);
     } else {
       console.error('Admin server error:', e);
     }
-  }
+  });
+  
+  return server;
 }
 
 export default app;

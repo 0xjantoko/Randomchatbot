@@ -9,6 +9,28 @@ export class SessionService {
   constructor(poolService) {
     this.poolService = poolService;
     this.sessions = new Map();
+    this._startCleanup();
+  }
+
+  _startCleanup() {
+    const TIMEOUT = config.SESSION_TIMEOUT * 1000;
+    const INTERVAL = Math.min(TIMEOUT, 300_000);
+    this._cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      const stale = [];
+      for (const [userId, session] of this.sessions) {
+        if (now - session.last_activity > TIMEOUT && !stale.includes(session)) {
+          stale.push(session);
+        }
+      }
+      for (const session of stale) {
+        this.endSession(session.user_a, 'timeout');
+        try {
+          console.log(`⏰ Session timed out: ${anonymizeUserId(session.user_a)} <-> ${anonymizeUserId(session.user_b)}`);
+        } catch (e) {}
+      }
+    }, INTERVAL);
+    this._cleanupInterval.unref();
   }
   
   /**
@@ -97,8 +119,8 @@ export class SessionService {
     }
     
     // Get partner profile info for context
-    const partnerProfile = this.getPartnerProfile(partnerId);
-    const prefix = `💬 [${partnerProfile?.age || '?'}y ${partnerProfile?.gender || '?'} ${partnerProfile?.location || '?'}]`;
+    const senderProfile = this.getPartnerProfile(fromUserId);
+    const prefix = `💬 [${senderProfile?.age || '?'}y ${senderProfile?.gender || '?'} ${senderProfile?.location || '?'}]`;
     
     try {
       await bot.api.sendMessage(partnerId, `${prefix}\n${text}`);
@@ -130,6 +152,6 @@ export class SessionService {
    * Get all active sessions count
    */
   getActiveSessions() {
-    return this.sessions.size / 2;
+    return Math.floor(this.sessions.size / 2);
   }
 }

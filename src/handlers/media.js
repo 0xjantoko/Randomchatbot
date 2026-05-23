@@ -7,6 +7,8 @@ import { checkPersonalInfo } from '../utils/privacy.js';
 import config from '../config.js';
 import { metrics, logger } from '../admin/index.js';
 import { InlineKeyboard, InputFile } from 'grammy';
+import { bannedCache } from '../services/banned-cache.js';
+import { rateLimiter } from '../services/rate-limiter.js';
 
 // Store active photo reveals to prevent abuse
 const activeReveals = new Map();
@@ -138,21 +140,19 @@ export function registerMediaHandlers(bot, { sessionService }) {
   bot.on('message:photo', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Check if banned
-    if (isBanned(userId)) {
+    if (bannedCache.isBanned(userId)) {
       await ctx.reply('❌ Akun kamu telah dibanned. Hubungi admin.');
       return;
     }
     
-    // Check if in session
     if (!sessionService.isInSession(userId)) {
       return;
     }
     
     const partnerId = sessionService.getPartner(userId);
     if (!partnerId) return;
-    
-    // Get photo (largest size)
+
+    if (!rateLimiter.checkMessage(userId)) return;
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
     
@@ -198,13 +198,11 @@ export function registerMediaHandlers(bot, { sessionService }) {
   bot.on('message:voice', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Check if banned
-    if (isBanned(userId)) {
+    if (bannedCache.isBanned(userId)) {
       await ctx.reply('❌ Akun kamu telah dibanned. Hubungi admin.');
       return;
     }
     
-    // Check if in session
     if (!sessionService.isInSession(userId)) {
       return;
     }
@@ -391,6 +389,7 @@ export function checkViolation(userId, content, contentType = 'text') {
     
     if (result.banned) {
       metrics.incBan();
+      bannedCache.add(userId);
       console.log(`🚫 User ${userId} auto-banned after ${result.violationCount} violations`);
       logger.error('user_banned', { userId, violations: result.violationCount, reason: v.type });
     }

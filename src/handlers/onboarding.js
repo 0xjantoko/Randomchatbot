@@ -35,6 +35,9 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
   bot.on('callback_query:data', async (ctx) => {
     const data = ctx.callbackQuery.data;
     
+    const knownPrefixes = ['premium_select', 'payment', 'gender_pref', 'preference'];
+    if (!knownPrefixes.some(p => data.startsWith(p))) return;
+    
     if (data.startsWith('premium_select:')) {
       const preference = data.split(':')[1];
       await handlePremiumSelect(ctx, preference);

@@ -22,7 +22,11 @@ export default {
   },
   
   PREMIUM_FEATURES: {
-    '18+': { name: '🔞 18+ Mode', price: 50 }
+    '18+': { 
+      name: '🔞 18+ Mode', 
+      price: 50,
+      description: 'Unlock chat with 18+ users'
+    }
   },
   
   // Privacy Settings
