@@ -30,6 +30,7 @@ const SUITES = [
   { name: 'test-moderation (R3/R4)', file: 'scripts/test-moderation.mjs', expect: [/0 fail/] },
   { name: 'test-p1 (trust/breach)', file: 'scripts/test-p1.mjs', expect: [/0 fail/] },
   { name: 'test-parameter (context score)', file: 'scripts/test-parameter.mjs', expect: [/0 fail/] },
+  { name: 'test-admin (panel auth + API)', file: 'scripts/test-admin.mjs', expect: [/0 fail/] },
   { name: 'simulate-abuse (red-team)', file: 'src/simulate-abuse.js', heavy: true, expect: [/22 passed, 0 failed/] },
   { name: 'simulate-personas (R4 EVICT)', file: 'scripts/simulate-personas.mjs', heavy: true, expect: [/Adult predator\s*→\s*EVICT/] },
   { name: 'readiness (smoke)', file: 'scripts/readiness-check.mjs', expect: [/0 fail/] }
