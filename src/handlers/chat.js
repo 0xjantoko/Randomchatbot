@@ -15,21 +15,23 @@ import { getMigrationWarning } from '../utils/privacy.js';
 export const contextParameter = new ContextParameter();
 
 export function registerChatHandlers(bot, { sessionService, xpService, achievementService, poolService }) {
-  bot.on('message:text', async (ctx) => {
+  // WAJIB next() saat TIDAK menangani — tanpa itu handler ini menelan pesan teks
+  // dan semua command setelahnya (/skip, /report, /profile, /shop, dst) tak pernah jalan.
+  bot.on('message:text', async (ctx, next) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
 
-    if (text.startsWith('/')) return;
+    if (text.startsWith('/')) return next();
 
     if (bannedCache.isBanned(userId)) {
       await ctx.reply(t(ctx, 'chat.banned'), { parse_mode: 'Markdown' });
       return;
     }
 
-    if (!sessionService.isInSession(userId)) return;
+    if (!sessionService.isInSession(userId)) return next();
 
     const partnerId = sessionService.getPartner(userId);
-    if (!partnerId) return;
+    if (!partnerId) return next();
 
     if (!rateLimiter.checkMessage(userId)) {
       await ctx.reply(t(ctx, 'chat.rate_limit'), { parse_mode: 'Markdown' });

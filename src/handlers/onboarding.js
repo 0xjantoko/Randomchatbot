@@ -58,21 +58,24 @@ function parseIndonesianNumber(text) {
 export function registerOnboardingHandlers(bot, { config, poolService, sessionService, xpService, achievementService }) {
   
   // Handle text messages during onboarding
-  bot.on('message:text', async (ctx) => {
+  // WAJIB next() saat tidak menangani — grammY: return tanpa next MENELAN pesan
+  // dan mematikan semua handler berikutnya (chat.js, command, media).
+  bot.on('message:text', async (ctx, next) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
     const state = ctx.session.state;
     const step = ctx.session.step;
-    
-    if (text.startsWith('/')) return;
-    if (!state || !state.startsWith('onboarding_')) return;
-    
+
+    if (text.startsWith('/')) return next();
+    if (!state || !state.startsWith('onboarding_')) return next();
+
     switch (step) {
       case 'language': await handleLanguage(ctx, text); break;
       case 'age': await handleAge(ctx, text); break;
       case 'age_verify': await handleAgeVerify(ctx, text); break;
       case 'gender': await handleGender(ctx, text); break;
       case 'location': await handleLocation(ctx, text); break;
+      default: return next();
     }
   });
   

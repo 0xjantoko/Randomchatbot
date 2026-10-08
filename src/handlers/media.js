@@ -12,6 +12,7 @@ import { rateLimiter } from '../services/rate-limiter.js';
 import { t } from '../locales/index.js';
 import { notifyAchievements, notifyLevelUp } from './gamification.js';
 import { resolveTrust } from '../services/trust.js';
+import { recordMessage as recordEvidence } from '../services/evidence.js';
 
 // Store active photo reveals to prevent abuse
 const activeReveals = new Map();
@@ -148,6 +149,20 @@ export function registerMediaHandlers(bot, { sessionService, xpService, achievem
     const partnerId = sessionService.getPartner(userId);
     if (!partnerId) return;
 
+    // R2 — caption foto dicek sama seperti teks: keluar-pool (kontak/sosmed/ketemu)
+    // tak boleh diteruskan, di semua pool. Foto-nya sendiri tetap in-pool (trust gate + timer).
+    const caption = ctx.message.caption || '';
+    if (caption) {
+      const violations = checkViolation(userId, caption, 'text', { bracket: ctx.session?.user?._ageBracket });
+      if (violations.length > 0) {
+        try {
+          await ctx.reply(t(ctx, 'chat.warning', { violations: violations.map(v => v.reason).join(', ') }), { parse_mode: 'Markdown' });
+        } catch (e) {}
+        logger.warn('exit_pool_blocked', { userId, channel: 'photo_caption', reasons: violations.map(v => v.category) });
+        return;
+      }
+    }
+
     if (!rateLimiter.checkMessage(userId)) return;
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
@@ -242,6 +257,10 @@ export function registerMediaHandlers(bot, { sessionService, xpService, achievem
       metrics.incVoice();
       updateUserStats(userId, 'message');
       logger.metric('voice', { from: userId, to: partnerId });
+
+      // Evidence: voice tak tertranskripsi (jujur soal batas audit) — tapi file_id + pengirim
+      // tercatat di ring buffer, ikut terkunci saat sesi minor berakhir / breach.
+      recordEvidence(userId, partnerId, `[voice file_id=${fileId}]`, { bracket: senderBracket || null });
       
       const partnerSession = sessionService.getSession(partnerId);
       const partnerLang = partnerSession
@@ -255,6 +274,43 @@ export function registerMediaHandlers(bot, { sessionService, xpService, achievem
     }
   });
   
+  // === Catch-all: tipe pesan TAK didukung (video_note, document, audio, contact,
+  // location, poll, dice, dll). Fail-closed: tak pernah diteruskan ke partner,
+  // tapi TIDAK senyap — user dapat feedback + tercatat di log/metric.
+  // Tipe yang sudah ditangani (atau butuh giliran berikutnya) → next().
+  const HANDLED_OR_LATER = new Set(['text', 'photo', 'voice', 'video', 'animation', 'sticker', 'successful_payment']);
+  bot.on('message', async (ctx, next) => {
+    const m = ctx.message;
+    for (const key of HANDLED_OR_LATER) {
+      if (m[key] !== undefined) return next();
+    }
+    // Deteksi tipe apa yang masuk untuk log
+    const type = ['video_note', 'document', 'audio', 'contact', 'location', 'venue', 'poll', 'dice', 'game', 'invoice', 'passport_data', 'new_chat_members'].find(k => m[k] !== undefined) || 'unknown';
+
+    const userId = ctx.from.id;
+    if (bannedCache.isBanned(userId)) return;
+    if (!sessionService.isInSession(userId)) return;
+
+    // Kartu kontak = kode posisi/kontak → ditangani sebagai exit-pool attempt
+    if (type === 'contact') {
+      const phone = String(m.contact?.phone_number || '');
+      const violations = checkViolation(userId, `contact:${phone}`, 'text', { bracket: ctx.session?.user?._ageBracket });
+      if (violations.length > 0) {
+        try {
+          await ctx.reply(t(ctx, 'chat.warning', { violations: violations.map(v => v.reason).join(', ') }), { parse_mode: 'Markdown' });
+        } catch (e) {}
+        logger.warn('exit_pool_blocked', { userId, channel: 'contact_card', phone: phone.slice(0, 4) + '***' });
+        return;
+      }
+    }
+
+    logger.warn('media_blocked', { userId, type });
+    metrics.incViolation?.();
+    try {
+      await ctx.reply(t(ctx, 'media.blocked_type', { type }), { parse_mode: 'Markdown' });
+    } catch (e) {}
+  });
+
   // /adminphotos command - Admin only
   bot.command('adminphotos', async (ctx) => {
     const userId = ctx.from.id;
