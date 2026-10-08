@@ -44,6 +44,16 @@ export class PoolService {
     return `${language}:${ageBracket}`;
   }
 
+  /** Shutdown — bersihkan state antrean (tidak ada interval global: skip
+   *  cooldown memakai setTimeout per-user). */
+  stop() {
+    this.pool.clear();
+    this.buckets.clear();
+    this.waitingQueue.clear();
+    this.skipCooldowns.clear();
+    this.skipHistory.clear();
+  }
+
   _cleanupSkipHistory(userId) {
     const now = Date.now();
     const history = this.skipHistory.get(userId);

@@ -39,6 +39,14 @@ export class SessionService {
     }, INTERVAL);
     this._cleanupInterval.unref();
   }
+
+  /** Shutdown — matikan interval cleanup (readiness: shutdown/interval leak). */
+  stop() {
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+    }
+  }
   
   /**
    * Create a new session between two users

@@ -96,6 +96,8 @@ process.on('SIGINT', async () => {
   xpService.stop();
   achievementService.stop();
   leaderboardService.stop();
+  try { sessionService.stop(); } catch (e) {}
+  try { poolService.stop(); } catch (e) {}
   try {
     const db = getDb();
     db.close();
