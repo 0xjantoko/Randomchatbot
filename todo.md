@@ -49,9 +49,9 @@
 - [ ] **Node versi** — lokal jalan di Node 26 (better-sqlite3 12.8 prebuilt OK); di VPS pakai **Node 22 LTS** (LTS resmi)
 - [ ] **Setup env** — `BOT_TOKEN`, `HASH_SECRET`, `ADMIN_API_KEY`, `LOG_ENCRYPTION_KEY`, `MINOR_REMATCH_HOURS`
 - [ ] **Deploy VPS** — minimal 512MB (RSS @100K user = 278MB, lihat Benchmark §9), domain + SSL untuk webhook
-- [ ] Catatan: `18+ Payment` lama **dihapus** — mode 18+ sudah tidak ada; Stars payment via `/shop` + `payment.js` (pre_checkout + successful_payment) sudah jalan
+- [ ] Catatan: `18+ Payment` lama **dihapus dari bot live** — mode 18+ tidak ada; Stars payment via `/shop` + `payment.js` (pre_checkout + successful_payment) sudah jalan
 
 ## 🗑️ Dihapus (tidak relevan)
 
-- ~~18+ Mode / `STAR_PRICE_18`~~ — dimensi 18+ dihapus total (DevProgress §10.1); pool memakai bracket umur
+- ~~18+ Mode / `STAR_PRICE_18`~~ — dimensi 18+ dihapus dari bot live (DevProgress §10.1); pool memakai bracket umur. **Residu diketahui:** `src/simulate.js` (script demo mati, tak ada di npm scripts) masih memuat menu 18+ — bersihkan kapan saja
 - ~~better-sqlite3 → sql.js swap~~ — tak perlu; native addon jalan (suite 9/9 hijau di Node 26)

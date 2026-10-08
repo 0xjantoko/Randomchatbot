@@ -28,8 +28,10 @@ dijaga oleh enforcement di §3, bukan oleh bucket saja.
 - Klaim **<18** tidak butuh verifikasi (dan tidak bisa dapat akses pool adult).
 - **Ratchet:** `bracket_locked = 'minor'` (lihat §3) bersifat permanen sampai admin mencabut —
   user yang pernah dikunci ke pool minor tidak bisa masuk pool adult walau klaim ulang.
-- Gate umur memakai `config.MIN_AGE` / `config.MAX_AGE` (`MIN_AGE=13`, `MAX_AGE=99`): 13-17 → Pool Minor,
-  18+ → Pool Adult, <13 ditolak. Ubah lewat `.env`, bukan hardcode.
+- Gate umur memakai `config.MIN_AGE` / `config.MAX_AGE`: 13-17 → Pool Minor,
+  18+ → Pool Adult, <MIN_AGE ditolak. **Runtime: `MIN_AGE=13` (wajib di-set di `.env`** —
+  fallback default di `config.js:16` hanya `'18'`; tanpa kunci itu user 13-17 akan ditolak),
+  `MAX_AGE=99`. Ubah lewat `.env`, bukan hardcode.
 
 ---
 
