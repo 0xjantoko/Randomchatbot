@@ -3,6 +3,9 @@
  * Run: node src/simulate.js
  */
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import readline from 'readline';
 import { PoolService } from './services/pool.js';
 import { SessionService } from './services/session.js';

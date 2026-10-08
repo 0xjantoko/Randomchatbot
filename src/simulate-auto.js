@@ -3,6 +3,9 @@
  * Run: node src/simulate-auto.js
  */
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { PoolService } from './services/pool.js';
 import { SessionService } from './services/session.js';
 import config from './config.js';

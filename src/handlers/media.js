@@ -2,24 +2,25 @@
  * Media Handler - Photos with timer + Voice transcription
  */
 
-import { getDb, savePhoto, logViolation, isBanned, getAllPhotos } from '../database/db.js';
+import { getDb, savePhoto, logViolation, logMigrationViolation, freezeUser, getAllPhotos, updateUserStats } from '../database/db.js';
 import { checkPersonalInfo } from '../utils/privacy.js';
 import config from '../config.js';
 import { metrics, logger } from '../admin/index.js';
 import { InlineKeyboard, InputFile } from 'grammy';
 import { bannedCache } from '../services/banned-cache.js';
 import { rateLimiter } from '../services/rate-limiter.js';
+import { t } from '../locales/index.js';
+import { notifyAchievements, notifyLevelUp } from './gamification.js';
+import { resolveTrust } from '../services/trust.js';
 
 // Store active photo reveals to prevent abuse
 const activeReveals = new Map();
 
-// Admin user IDs - Mikhail (Jantoko)
-const ADMIN_IDS = [746661594]; // @jantoko Telegram ID
+function getPhotoTimer(ageBracket) {
+  return ageBracket === 'minor' ? 3 : 10;
+}
 
-// Photo timer in seconds
-const PHOTO_TIMER_SECONDS = 10;
-
-export function registerMediaHandlers(bot, { sessionService }) {
+export function registerMediaHandlers(bot, { sessionService, xpService, achievementService }) {
   
   // Handle photo reveal button tap
   bot.on('callback_query:data', async (ctx) => {
@@ -29,61 +30,56 @@ export function registerMediaHandlers(bot, { sessionService }) {
       const fileId = data.split(':')[1];
       const userId = ctx.from.id;
       
-      // Check if user is still in session
       if (!sessionService.isInSession(userId)) {
-        await ctx.answerCallbackQuery({ text: '❌ Sesi chat sudah berakhir', show_alert: true });
+        await ctx.answerCallbackQuery({ text: t(ctx, 'media.session_ended'), show_alert: true });
         return;
       }
       
-      // Prevent multiple reveals at once
       if (activeReveals.has(userId)) {
-        await ctx.answerCallbackQuery({ text: '⏳ Foto sedang ditampilkan...', show_alert: false });
+        await ctx.answerCallbackQuery({ text: t(ctx, 'media.photo_loading'), show_alert: false });
         return;
       }
       
       activeReveals.set(userId, true);
       
       try {
-        // Delete the "Tap to reveal" message
         await ctx.deleteMessage();
         
-        // Send warning first
+        const viewerBracket = ctx.session?.user?._ageBracket;
+        const timer = getPhotoTimer(viewerBracket);
+        const lang = ctx.session.language;
+        
         await bot.api.sendMessage(userId, 
-          `⚠️ *PERINGATAN KEAMANAN*\n\n` +
-          `🚫 *DILARANG:*\n` +
-          `• Screenshot / screen recording\n` +
-          `• Save foto ke gallery\n` +
-          `• Share foto ke luar chat\n\n` +
-          `🔴 Pelanggaran = *BANNED PERMANEN*\n\n` +
-          `⏱️ Foto akan dihapus dalam ${PHOTO_TIMER_SECONDS} detik`,
+          t({ session: { language: lang } }, 'media.photo_warning', { seconds: timer }),
           { parse_mode: 'Markdown' }
         );
         
-        // Send the actual photo
         const photoMsg = await bot.api.sendPhoto(userId, fileId, {
-          caption: `⏱️ ${PHOTO_TIMER_SECONDS} detik...`,
+          caption: t({ session: { language: lang } }, 'media.photo_timer', { seconds: timer }),
           parse_mode: 'Markdown'
         });
         
-        // Notify sender that photo was opened
         const partnerId = sessionService.getPartner(userId);
         if (partnerId) {
           try {
+            const partnerSession = sessionService.getSession(partnerId);
+            const partnerLang = partnerSession 
+              ? (partnerSession.user_a === partnerId ? partnerSession.profile_a?.language : partnerSession.profile_b?.language)
+              : 'id';
             await bot.api.sendMessage(partnerId, 
-              `📸 Partner membuka foto`,
+              t({ session: { language: partnerLang } }, 'media.photo_opened'),
               { parse_mode: 'Markdown' }
             );
           } catch (e) {}
         }
         
-        await ctx.answerCallbackQuery({ text: '👁️ Foto terbuka!', show_alert: false });
+        await ctx.answerCallbackQuery({ text: t(ctx, 'media.photo_opened_ack'), show_alert: false });
         
-        // Schedule auto-delete after 10 seconds
         setTimeout(async () => {
           try {
             await bot.api.deleteMessage(userId, photoMsg.message_id);
             await bot.api.sendMessage(userId, 
-              `📸 *Foto telah dihapus*\n\n✅ Phantom picture mode`,
+              t({ session: { language: lang } }, 'media.photo_deleted'),
               { parse_mode: 'Markdown' }
             );
             logger.metric('photo_deleted', { userId, photoMessageId: photoMsg.message_id });
@@ -91,37 +87,29 @@ export function registerMediaHandlers(bot, { sessionService }) {
             console.log(`Photo delete skipped: ${deleteError.message}`);
           }
           activeReveals.delete(userId);
-        }, PHOTO_TIMER_SECONDS * 1000);
+        }, timer * 1000);
         
       } catch (e) {
         activeReveals.delete(userId);
         console.error('Photo reveal error:', e);
-        await ctx.answerCallbackQuery({ text: '❌ Gagal menampilkan foto', show_alert: true });
+        await ctx.answerCallbackQuery({ text: t(ctx, 'media.photo_failed'), show_alert: true });
       }
     }
   });
   
-  // Block: Video (not allowed per Rules.md)
   bot.on('message:video', async (ctx) => {
     const userId = ctx.from.id;
     if (!sessionService.isInSession(userId)) return;
     
-    await ctx.reply('❌ *Video tidak diperbolehkan.*\n\nHanya foto dan voice message yang diizinkan.',
-      { parse_mode: 'Markdown' }
-    );
-    
+    await ctx.reply(t(ctx, 'media.blocked_video'), { parse_mode: 'Markdown' });
     logger.warn('media_blocked', { userId, type: 'video' });
   });
   
-  // Block: GIF/Sticker (not allowed per Rules.md)
   bot.on('message:animation', async (ctx) => {
     const userId = ctx.from.id;
     if (!sessionService.isInSession(userId)) return;
     
-    await ctx.reply('❌ *GIF tidak diperbolehkan.*\n\nGIF dan sticker eksternal tidak didukung.',
-      { parse_mode: 'Markdown' }
-    );
-    
+    await ctx.reply(t(ctx, 'media.blocked_gif'), { parse_mode: 'Markdown' });
     logger.warn('media_blocked', { userId, type: 'gif' });
   });
   
@@ -129,10 +117,7 @@ export function registerMediaHandlers(bot, { sessionService }) {
     const userId = ctx.from.id;
     if (!sessionService.isInSession(userId)) return;
     
-    await ctx.reply('❌ *Sticker tidak diperbolehkan.*\n\nGIF dan sticker eksternal tidak didukung.',
-      { parse_mode: 'Markdown' }
-    );
-    
+    await ctx.reply(t(ctx, 'media.blocked_sticker'), { parse_mode: 'Markdown' });
     logger.warn('media_blocked', { userId, type: 'sticker' });
   });
   
@@ -141,11 +126,22 @@ export function registerMediaHandlers(bot, { sessionService }) {
     const userId = ctx.from.id;
     
     if (bannedCache.isBanned(userId)) {
-      await ctx.reply('❌ Akun kamu telah dibanned. Hubungi admin.');
+      await ctx.reply(t(ctx, 'media.session_ended'), { parse_mode: 'Markdown' });
       return;
     }
     
     if (!sessionService.isInSession(userId)) {
+      return;
+    }
+
+    // Trust gate (P1): shadow (<3 sesi selesai) & flagged → foto terkunci
+    const trust = resolveTrust(userId);
+    if (trust === 'flagged') {
+      await ctx.reply(t(ctx, 'media.locked_flagged'), { parse_mode: 'Markdown' });
+      return;
+    }
+    if (trust === 'shadow') {
+      await ctx.reply(t(ctx, 'media.locked_shadow'), { parse_mode: 'Markdown' });
       return;
     }
     
@@ -156,38 +152,47 @@ export function registerMediaHandlers(bot, { sessionService }) {
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
     
-    // Get anonymous IDs
-    const senderAnonId = sessionService.getPartnerProfile(userId)?.anonymous_id || 'unknown';
-    const receiverAnonId = sessionService.getPartnerProfile(partnerId)?.anonymous_id || 'unknown';
+    const senderAnonId = sessionService.getUserProfile(userId)?.anonymous_id || 'unknown';
+    const receiverAnonId = sessionService.getUserProfile(partnerId)?.anonymous_id || 'unknown';
     
-    // Save to database
     try {
       savePhoto(senderAnonId, receiverAnonId, fileId);
+      updateUserStats(userId, 'photo');
       console.log(`📸 Photo saved: ${senderAnonId} → ${receiverAnonId}`);
     } catch (e) {
       console.error('Photo save error:', e);
     }
     
-    // Track metrics
     metrics.incPhoto();
     logger.metric('photo', { from: userId, to: partnerId });
     
-    // Send blind photo notification with reveal button
     try {
+      const partnerSession = sessionService.getSession(partnerId);
+      const partnerProfile = partnerSession
+        ? (partnerSession.user_a === partnerId ? partnerSession.profile_a : partnerSession.profile_b)
+        : null;
+      const partnerLang = partnerProfile?.language || 'id';
+      const partnerTimer = getPhotoTimer(partnerProfile?._ageBracket);
       const revealKeyboard = new InlineKeyboard()
-        .text(`👁️ Lihat Foto (${PHOTO_TIMER_SECONDS}s)`, `reveal_photo:${fileId}`);
+        .text(t({ session: { language: partnerLang } }, 'media.reveal_button', { seconds: partnerTimer }), `reveal_photo:${fileId}`);
       
       await bot.api.sendMessage(partnerId, 
-        `📸 *FOTO BLIND* diterima\n\n` +
-        `🔒 Foto dienkripsi & dilindungi\n` +
-        `⏱️ Hanya bisa dilihat ${PHOTO_TIMER_SECONDS} detik\n` +
-        `🚫 Screenshot/Share = Banned\n\n` +
-        `Tap tombol untuk membuka:`,
+        t({ session: { language: partnerLang } }, 'media.blind_photo', { seconds: partnerTimer }),
         { 
           parse_mode: 'Markdown',
           reply_markup: revealKeyboard
         }
       );
+
+      const booster = ctx.session.inventory?.xp_booster;
+      const xpMult = (booster && booster.expires_at > Date.now()) ? 2 : 1;
+      const xpResult = xpService.addXP(userId, 'photo', {}, xpMult);
+      if (xpResult) {
+        const lang = ctx.session.language;
+        const newAchs = achievementService.check(userId, 'photo', { profile: xpService.getProfile(userId) });
+        await notifyAchievements(bot.api, userId, newAchs, lang);
+        await notifyLevelUp(bot.api, userId, xpResult, lang);
+      }
       
     } catch (e) {
       console.error('Photo forward error:', e);
@@ -206,6 +211,22 @@ export function registerMediaHandlers(bot, { sessionService }) {
     if (!sessionService.isInSession(userId)) {
       return;
     }
+
+    // Voice: minor diblokir total; adult harus verified (>=3 sesi, tidak flagged)
+    const senderBracket = ctx.session?.user?._ageBracket;
+    const voiceTrust = resolveTrust(userId);
+    if (senderBracket === 'minor') {
+      await ctx.reply(t(ctx, 'media.voice_minor_blocked'), { parse_mode: 'Markdown' });
+      return;
+    }
+    if (voiceTrust === 'flagged') {
+      await ctx.reply(t(ctx, 'media.locked_flagged'), { parse_mode: 'Markdown' });
+      return;
+    }
+    if (voiceTrust !== 'verified') {
+      await ctx.reply(t(ctx, 'media.locked_shadow'), { parse_mode: 'Markdown' });
+      return;
+    }
     
     const partnerId = sessionService.getPartner(userId);
     if (!partnerId) return;
@@ -214,21 +235,21 @@ export function registerMediaHandlers(bot, { sessionService }) {
     const voice = ctx.message.voice;
     const fileId = voice.file_id;
     
+    if (!rateLimiter.checkMessage(userId)) return;
+    
     try {
-      // Get file path
-      const file = await bot.api.getFile(fileId);
-      const filePath = file.file_path;
-      
       // Track metrics
       metrics.incVoice();
+      updateUserStats(userId, 'message');
       logger.metric('voice', { from: userId, to: partnerId });
       
-      // For now, just forward as text placeholder
-      // Real implementation would need audio transcription service
-      await bot.api.sendMessage(partnerId, 
-        `🎤 *Voice message received*\n\n⬇️ Download: ${filePath}\n\n(Speech-to-text belum tersedia)`,
-        { parse_mode: 'Markdown' }
-      );
+      const partnerSession = sessionService.getSession(partnerId);
+      const partnerLang = partnerSession
+        ? (partnerSession.user_a === partnerId ? partnerSession.profile_a?.language : partnerSession.profile_b?.language)
+        : 'id';
+      await bot.api.sendVoice(partnerId, fileId, {
+        caption: t({ session: { language: partnerLang } }, 'media.voice_caption')
+      });
     } catch (e) {
       console.error('Voice forward error:', e);
     }
@@ -239,8 +260,7 @@ export function registerMediaHandlers(bot, { sessionService }) {
     const userId = ctx.from.id;
     
     // Check if user is admin
-    if (!ADMIN_IDS.includes(userId)) {
-      await ctx.reply('❌ Access denied.');
+    if (!config.ADMIN_IDS.includes(userId)) {      await ctx.reply('❌ Access denied.');
       return;
     }
     
@@ -271,61 +291,115 @@ export function registerMediaHandlers(bot, { sessionService }) {
     }
   });
   
-  // /admindb command - Download database file
-  bot.command('admindb', async (ctx) => {
+  // /adminexport command - Sanitized user stats export only (NO raw DB)
+  bot.command('adminexport', async (ctx) => {
     const userId = ctx.from.id;
     
-    // Check if user is admin
-    if (!ADMIN_IDS.includes(userId)) {
+    if (!config.ADMIN_IDS.includes(userId)) {
       await ctx.reply('❌ Access denied.');
       return;
     }
     
     try {
-      const dbPath = process.env.DB_PATH || './data.db';
+      const db = getDb();
       
-      await ctx.reply('📁 Sending database file...');
+      // Export only anonymized, non-sensitive data
+      const bans = db.prepare('SELECT anonymous_id, reason, banned_at FROM bans').all();
+      const violations = db.prepare('SELECT COUNT(*) as total, violation_type FROM violations GROUP BY violation_type').all();
+      const stats = db.prepare('SELECT COUNT(*) as total_users FROM user_stats').get();
       
-      // Send database as document
-      await bot.api.sendDocument(userId, new InputFile(dbPath), {
-        caption: `🗄️ RandomChat Database\n📅 ${new Date().toLocaleString()}`,
-        parse_mode: 'Markdown'
-      });
+      let report = `*📊 Admin Export (${new Date().toLocaleString()})*\n\n`;
+      report += `*Users tracked:* ${stats.total_users}\n\n`;
+      report += `*Violations by type:*\n`;
+      for (const v of violations) {
+        report += `• ${v.violation_type}: ${v.total}\n`;
+      }
+      report += `\n*Banned users:* ${bans.length}\n`;
+      for (const b of bans.slice(0, 20)) {
+        report += `• ${b.anonymous_id} — ${b.reason}\n`;
+      }
       
-      logger.info('admin_db_export', { adminId: userId });
+      await ctx.reply(report, { parse_mode: 'Markdown' });
+      logger.info('admin_sanitized_export', { adminId: userId });
       
     } catch (e) {
-      console.error('DB export error:', e);
-      await ctx.reply(`❌ Failed to send database: ${e.message}`);
+      console.error('Export error:', e);
+      await ctx.reply(`❌ Export failed: ${e.message}`);
     }
   });
   
-  // /adminquery command - Run SQL query
+  // /adminquery command - Run SQL query (SAFE mode)
   bot.command('adminquery', async (ctx) => {
     const userId = ctx.from.id;
     
     // Check if user is admin
-    if (!ADMIN_IDS.includes(userId)) {
-      await ctx.reply('❌ Access denied.');
+    if (!config.ADMIN_IDS.includes(userId)) {      await ctx.reply('❌ Access denied.');
       return;
     }
     
     const args = ctx.message.text.split(' ').slice(1);
     const query = args.join(' ');
     
-    if (!query) {
-      await ctx.reply('Usage: /adminquery SELECT * FROM photos LIMIT 5');
+    if (!query || !query.trim()) {
+      await ctx.reply('Usage: /adminquery "SELECT * FROM photos LIMIT 5"');
       return;
     }
     
-    // Only allow SELECT queries for safety
-    if (!query.trim().toLowerCase().startsWith('select')) {
-      await ctx.reply('❌ Only SELECT queries allowed for security.');
+    // STRICT whitelist: only allow simple SELECT with no dangerous keywords
+    const trimmed = query.trim();
+    const upper = trimmed.toUpperCase();
+    
+    // Reject any query containing DML/DDL or stacked queries
+    const forbiddenPatterns = [
+      /\bINSERT\b/, /\bUPDATE\b/, /\bDELETE\b/, /\bDROP\b/, /\bALTER\b/, /\bCREATE\b/,
+      /\bREPLACE\b/, /\bTRUNCATE\b/, /\bEXEC\b/, /\bEXECUTE\b/, /\bSYSTEM\b/,
+      /\bGRANT\b/, /\bREVOKE\b/, /\bATTACH\b/, /\bDETACH\b/, /\bBEGIN\b/, /\bCOMMIT\b/,
+      /\bROLLBACK\b/, /\bPRAGMA\b/, /\bLOAD\b/, /\bWITH\s+\w+\s+AS/i,
+      /\/\*/, /--/, /;/, /\bUNION\b.*\bSELECT\b/i, /\bEXPLAIN\b/
+    ];
+    
+    for (const pattern of forbiddenPatterns) {
+      if (pattern.test(trimmed)) {
+        await ctx.reply('❌ Query not allowed: contains forbidden keyword or syntax.');
+        return;
+      }
+    }
+    
+    // Must start with SELECT and nothing else suspicious
+    if (!upper.startsWith('SELECT ') && !upper.startsWith('SELECT(')) {
+      await ctx.reply('❌ Only simple SELECT queries allowed.');
+      return;
+    }
+    
+    // Limit result size via LIMIT clause if not present
+    if (!/\bLIMIT\b/i.test(trimmed)) {
+      // Append LIMIT safely — only if no LIMIT already exists
+      const safeQuery = trimmed.replace(/;\s*$/, '') + ' LIMIT 20';
+      try {
+        const stmt = getDb().prepare(safeQuery);
+        const results = stmt.all();
+        
+        if (results.length === 0) {
+          await ctx.reply('📭 Query returned 0 results.');
+          return;
+        }
+        
+        const displayResults = results.slice(0, 20);
+        let response = `*📊 Query Results (${results.length} rows, limited 20):\n\n`;
+        response += '```json\n';
+        response += JSON.stringify(displayResults, null, 2).substring(0, 3500);
+        response += '\n```';
+        
+        await ctx.reply(response, { parse_mode: 'Markdown' });
+        
+      } catch (e) {
+        await ctx.reply(`❌ Query error: ${e.message}`);
+      }
       return;
     }
     
     try {
-      const stmt = getDb().prepare(query);
+      const stmt = getDb().prepare(trimmed);
       const results = stmt.all();
       
       if (results.length === 0) {
@@ -333,14 +407,11 @@ export function registerMediaHandlers(bot, { sessionService }) {
         return;
       }
       
-      // Format results (limit to avoid message too long)
-      const maxResults = 20;
-      const displayResults = results.slice(0, maxResults);
-      
-      let response = `*📊 Query Results (${results.length} rows):*\n\n`;
+      const displayResults = results.slice(0, 20);
+      let response = `*📊 Query Results (${results.length} rows):\n\n`;
       response += '```json\n';
       response += JSON.stringify(displayResults, null, 2).substring(0, 3500);
-      if (results.length > maxResults) {
+      if (results.length > 20) {
         response += '\n... (truncated)';
       }
       response += '\n```';
@@ -355,43 +426,50 @@ export function registerMediaHandlers(bot, { sessionService }) {
 
 // ============ VIOLATION DETECTION ============
 
-export function checkViolation(userId, content, contentType = 'text') {
+export function checkViolation(userId, content, contentType = 'text', options = {}) {
   const violations = [];
+  const minorPool = options.bracket === 'minor';
   
-  // Check personal info
   const safety = checkPersonalInfo(content);
   if (!safety.safe) {
     violations.push({
-      type: 'personal_info',
+      type: safety.category || 'personal_info',
       reason: `Menyertakan ${safety.reason}`,
-      details: content.substring(0, 50)
+      details: content.substring(0, 50),
+      category: safety.category || 'personal_info'
     });
   }
   
-  // 18+ specific keywords (for random mode - not 18+ mode)
-  // If user is in random (non-18+) mode and talks about 18+ topics
-  const adultKeywords = ['sex', 'porn', '18+', 'adult', 'nsfw', 'xxx', 'sexual'];
-  const isAdultContent = adultKeywords.some(kw => content.toLowerCase().includes(kw));
-  
-  if (isAdultContent) {
-    violations.push({
-      type: 'adult_content_random',
-      reason: 'Konten 18+ di mode random',
-      details: content.substring(0, 50)
-    });
-  }
-  
-  // Log violations
+  // Log violations — personal_info leads to auto-ban, migration leads to freeze
   for (const v of violations) {
-    const result = logViolation(userId, v.type, v.details);
-    metrics.incViolation();
-    logger.warn('violation', { userId, type: v.type, details: v.details });
-    
-    if (result.banned) {
-      metrics.incBan();
-      bannedCache.add(userId);
-      console.log(`🚫 User ${userId} auto-banned after ${result.violationCount} violations`);
-      logger.error('user_banned', { userId, violations: result.violationCount, reason: v.type });
+    if (v.category === 'migration') {
+      const result = logMigrationViolation(userId, v.details);
+      metrics.incViolation();
+      logger.warn('migration_violation', { userId, details: v.details, count: result.count, minorPool });
+
+      // Pool Minor = hardened zone: ajakan pindah platform / ketemu = freeze langsung, tanpa 3 strike
+      if (minorPool) {
+        freezeUser(userId, 'Hardened minor pool: contact-migration attempt');
+        bannedCache.add(userId);
+        console.log(`🧊 Minor-pool freeze: user ${userId} (${v.reason})`);
+        logger.error('user_frozen', { userId, reason: 'minor_pool_migration', count: result.count });
+      } else if (result.frozen) {
+        freezeUser(userId, 'Migration violation: repeated attempts to share contacts');
+        bannedCache.add(userId);
+        console.log(`🧊 User ${userId} FROZEN for 24h (${result.count} migration violations)`);
+        logger.error('user_frozen', { userId, reason: 'migration', count: result.count });
+      }
+    } else {
+      const result = logViolation(userId, v.type, v.details);
+      metrics.incViolation();
+      logger.warn('violation', { userId, type: v.type, details: v.details });
+
+      if (result.banned) {
+        metrics.incBan();
+        bannedCache.add(userId);
+        console.log(`🚫 User ${userId} auto-banned after ${result.violationCount} violations`);
+        logger.error('user_banned', { userId, violations: result.violationCount, reason: v.type });
+      }
     }
   }
   

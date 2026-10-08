@@ -4,8 +4,16 @@
  */
 
 import crypto from 'crypto';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const HASH_SECRET = process.env.HASH_SECRET || 'randomchat_secret_key';
+const HASH_SECRET = process.env.HASH_SECRET;
+
+if (!HASH_SECRET) {
+  console.error('❌ FATAL: HASH_SECRET environment variable is required.');
+  console.error('   Set it via: export HASH_SECRET="your-secure-random-string"');
+  process.exit(1);
+}
 
 /**
  * Hash Telegram user ID to create anonymous ID
@@ -21,6 +29,20 @@ export function anonymizeUserId(userId) {
     .toUpperCase();
   
   return `Anon-${hash}`;
+}
+
+/**
+ * Hash pasangan user (canonical — urutan tidak berpengaruh).
+ * Dipakai untuk cooldown re-match partner (P1) dan pair_key evidence.
+ * @returns {string} hex 32 char
+ */
+export function hashPairId(a, b) {
+  const [low, high] = [String(a), String(b)].sort();
+  return crypto
+    .createHash('sha256')
+    .update(`${low}:${high}:${HASH_SECRET}`)
+    .digest('hex')
+    .substring(0, 32);
 }
 
 /**
@@ -41,6 +63,9 @@ export function getPublicProfile(user, config) {
   
   // Add anonymous ID
   profile.anonymous_id = anonymizeUserId(user.user_id);
+  profile._ageBracket = user._ageBracket;
+  profile._ageVerified = user._ageVerified;
+  profile.trust_level = user.trust_level;
   
   return profile;
 }
@@ -63,7 +88,10 @@ export function sanitizeUser(user) {
     gender_prefs: user.gender_prefs,
     age_min: user.age_min,
     age_max: user.age_max,
-    is_premium: user.is_premium
+    is_premium: user.is_premium,
+    _ageBracket: user._ageBracket,
+    _ageVerified: user._ageVerified,
+    trust_level: user.trust_level
   };
 }
 
@@ -73,21 +101,72 @@ export function sanitizeUser(user) {
  * @returns {Object} - { safe: boolean, reason: string }
  */
 export function checkPersonalInfo(text) {
-  const patterns = [
-    { pattern: /(\+62|62|0)\d{9,12}/, reason: 'phone number' },
-    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card' },
-    { pattern: /@[\w]+/g, reason: 'username' },
-    { pattern: /t\.me\/[\w]+/g, reason: 'Telegram link' },
-    { pattern: /whatsapp/i, reason: 'WhatsApp' },
-    { pattern: /instagram/i, reason: 'Instagram' },
-    { pattern: /facebook/i, reason: 'Facebook' }
+  const lower = text.toLowerCase();
+
+  // Sensitive personal data (high risk) → personal_info category
+  const sensitivePatterns = [
+    { pattern: /(\+62|62|0)\d{8,15}/, reason: 'phone number', category: 'personal_info' },
+    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card', category: 'personal_info' },
+    { pattern: /email\b|e-mail|@\w+\.(com|co\.id|net|org|id)/i, reason: 'email', category: 'personal_info' }
   ];
-  
-  for (const { pattern, reason } of patterns) {
+
+  // Platform contact sharing → migration category
+  const platformPatterns = [
+    { pattern: /@[\w.]{2,}/g, reason: 'username', category: 'migration' },
+    { pattern: /t\.me\/(?:joinchat\/)?[\w]+/g, reason: 'Telegram link', category: 'migration' },
+    { pattern: /whatsapp|wa\.me|wa\/|wa saya|wa aku/i, reason: 'WhatsApp', category: 'migration' },
+    { pattern: /instagram|ig\.|ig saya|ig aku|ig gw/i, reason: 'Instagram', category: 'migration' },
+    { pattern: /facebook|fb\.|fb saya|fb aku/i, reason: 'Facebook', category: 'migration' },
+    { pattern: /discord|dc\.|dc saya|dc aku|discord saya/i, reason: 'Discord', category: 'migration' },
+    { pattern: /line\b|line saya|line aku|line-id|line gw/i, reason: 'Line', category: 'migration' },
+    { pattern: /signal|signal\.|signal saya|signal aku/i, reason: 'Signal', category: 'migration' },
+    { pattern: /snapchat|snap\.|sc saya|sc aku|snap gw/i, reason: 'Snapchat', category: 'migration' },
+    { pattern: /tiktok|tt\.|tt saya|tt aku|tt gw/i, reason: 'TikTok', category: 'migration' },
+    { pattern: /twitter|x\.com|twit/i, reason: 'X / Twitter', category: 'migration' }
+  ];
+
+  // "Ajak keluar" phrases → migration category
+  const invitePatterns = [
+    { pattern: /(ketemu|temuan|kopi.?yuk|ngopi|main.?ke|datang.?ke|janjian|meetup)/i, reason: 'ajakan ketemu', category: 'migration' },
+    { pattern: /(pindah|lanjut|move|lanjutin)\s.*(wa|ig|tele|line|dc|discord|chat)/i, reason: 'ajakan pindah platform', category: 'migration' },
+    { pattern: /(wa|ig|line|dc|tele|email).*(aku|saya|gue|gw)/i, reason: 'share kontak', category: 'migration' },
+    { pattern: /(sini|sana)\s*(wa|ig|line|tele|dc)/i, reason: 'ajakan pindah chat', category: 'migration' },
+    { pattern: /dm\s*(aku|saya|gue|gw)/i, reason: 'ajakan DM', category: 'migration' },
+    { pattern: /\bcp\b.*(wa|ig|line|tele)/i, reason: 'contact person', category: 'migration' }
+  ];
+
+  for (const { pattern, reason, category } of sensitivePatterns) {
     if (pattern.test(text)) {
-      return { safe: false, reason };
+      return { safe: false, reason, category };
+    }
+  }
+
+  for (const { pattern, reason, category } of platformPatterns) {
+    if (pattern.test(text)) {
+      return { safe: false, reason, category };
+    }
+  }
+
+  for (const { pattern, reason, category } of invitePatterns) {
+    if (pattern.test(lower)) {
+      return { safe: false, reason, category };
     }
   }
   
-  return { safe: true };
+  return { safe: true, category: null };
+}
+
+export function getMigrationWarning(reason) {
+  const warnings = {
+    'phone number': '⚠️ Nomor telepon tidak boleh dibagikan. Pertemuan fisik dengan orang asing sangat berbahaya.',
+    'username': '⚠️ Username media sosial tidak boleh dibagikan. Lawan bicaramu tetap anonim untuk alasan keamanan.',
+    'WhatsApp': '⚠️ Ajakan pindah ke WhatsApp terdeteksi. Pindah ke platform lain menghilangkan proteksi anonimitas.',
+    'Instagram': '⚠️ Ajakan pindah ke Instagram terdeteksi. Identitas aslimu bisa terlacak.',
+    'Line': '⚠️ Ajakan pindah ke Line terdeteksi. Pertahankan anonimitasmu di sini.',
+    'Discord': '⚠️ Ajakan pindah ke Discord terdeteksi. Jangan bagikan kontak ke orang asing.',
+    'Telegram link': '⚠️ Link Telegram terdeteksi. Jangan bagikan kontak ke orang asing.',
+    'ajakan ketemu': '⚠️ Ajakan bertemu terdeteksi. Bertemu dengan orang asing dari internet sangat berisiko.',
+    'ajakan pindah platform': '⚠️ Ajakan pindah platform terdeteksi. Anonimitasmu hilang di luar sini.'
+  };
+  return warnings[reason] || `⚠️ Informasi kontak terdeteksi: ${reason}. Ini demi keamananmu.`;
 }

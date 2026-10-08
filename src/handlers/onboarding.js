@@ -1,17 +1,61 @@
-/**
- * Onboarding handlers — Profile creation + Premium unlock
- */
-
-import { Keyboard, InlineKeyboard } from 'grammy';
+import { Keyboard } from 'grammy';
 import { anonymizeUserId } from '../utils/privacy.js';
+import { t, tLang } from '../locales/index.js';
+import { incrementReferralCount, getReferralCount, updateUserProfile, getModerationInfo } from '../database/db.js';
+import { notifyAchievements, notifyLevelUp } from './gamification.js';
+import { getAgeBracket } from '../services/pool.js';
+import config from '../config.js';
 
 const genderKeyboard = new Keyboard()
   .text('👨 Male')
   .text('👩 Female')
-  .row()
-  .text('🌈 Other');
+  .row();
 
-export function registerOnboardingHandlers(bot, { config, poolService, sessionService }) {
+const INDONESIAN_NUMBERS = {
+  'nol': 0, 'satu': 1, 'dua': 2, 'tiga': 3, 'empat': 4,
+  'lima': 5, 'enam': 6, 'tujuh': 7, 'delapan': 8, 'sembilan': 9,
+  'sepuluh': 10, 'sebelas': 11, 'seratus': 100
+};
+
+function parseIndonesianNumber(text) {
+  const cleaned = text.toLowerCase().replace(/\b(dengan|adalah|umur|usia|saya|aku)\b/g, '').trim();
+  const words = cleaned.split(/\s+/).filter(w => w);
+  
+  if (words.length === 0) return NaN;
+  
+  // Single word: "tujuh" → 7, "sebelas" → 11, "seratus" → 100
+  if (words.length === 1) {
+    if (INDONESIAN_NUMBERS[words[0]] !== undefined) return INDONESIAN_NUMBERS[words[0]];
+    // Try direct parsing for English numbers too
+    const num = parseInt(words[0]);
+    if (!isNaN(num)) return num;
+    return NaN;
+  }
+  
+  // Two words: "dua belas" → 12, "dua puluh" → 20
+  if (words.length === 2) {
+    const first = INDONESIAN_NUMBERS[words[0]];
+    if (first === undefined) return parseInt(words.join('')) || NaN;
+    
+    if (words[1] === 'belas') return first + 10;
+    if (words[1] === 'puluh') return first * 10;
+    
+    const second = INDONESIAN_NUMBERS[words[1]];
+    if (second !== undefined && first === 1) return 10 + second;
+    return parseInt(words.join('')) || NaN;
+  }
+  
+  // Three words: "dua puluh satu" → 21
+  if (words.length === 3 && words[1] === 'puluh') {
+    const tens = INDONESIAN_NUMBERS[words[0]];
+    const ones = INDONESIAN_NUMBERS[words[2]];
+    if (tens !== undefined && ones !== undefined) return tens * 10 + ones;
+  }
+  
+  return parseInt(cleaned.replace(/\s+/g, '')) || NaN;
+}
+
+export function registerOnboardingHandlers(bot, { config, poolService, sessionService, xpService, achievementService }) {
   
   // Handle text messages during onboarding
   bot.on('message:text', async (ctx) => {
@@ -24,292 +68,254 @@ export function registerOnboardingHandlers(bot, { config, poolService, sessionSe
     if (!state || !state.startsWith('onboarding_')) return;
     
     switch (step) {
+      case 'language': await handleLanguage(ctx, text); break;
       case 'age': await handleAge(ctx, text); break;
+      case 'age_verify': await handleAgeVerify(ctx, text); break;
       case 'gender': await handleGender(ctx, text); break;
       case 'location': await handleLocation(ctx, text); break;
-      case 'language': await handleLanguage(ctx, text); break;
     }
   });
   
-  // Handle callback queries
-  bot.on('callback_query:data', async (ctx) => {
-    const data = ctx.callbackQuery.data;
+  bot.command('cancel', async (ctx) => {
+    const state = ctx.session.state;
+    if (!state || !state.startsWith('onboarding_')) return;
     
-    const knownPrefixes = ['premium_select', 'payment', 'gender_pref', 'preference'];
-    if (!knownPrefixes.some(p => data.startsWith(p))) return;
+    ctx.session.state = null;
+    ctx.session.step = null;
     
-    if (data.startsWith('premium_select:')) {
-      const preference = data.split(':')[1];
-      await handlePremiumSelect(ctx, preference);
-    } else if (data.startsWith('payment:')) {
-      const parts = data.split(':');
-      const action = parts[1];
-      const preference = parts[2];
-      if (action === 'buy') await handlePayment(ctx, preference);
-      else if (action === 'verify') await handlePaymentVerify(ctx, preference);
-    } else if (data.startsWith('gender_pref:')) {
-      const genderPref = data.split(':')[1];
-      await handleGenderPrefSelected(ctx, genderPref);
-    } else if (data.startsWith('preference:')) {
-      const preference = data.split(':')[1];
-      if (preference === 'back') await showPreferenceSelection(ctx);
-      else await handlePreferenceSelected(ctx, preference);
-    }
-    
-    await ctx.answerCallbackQuery();
+    await ctx.reply(t(ctx, 'onboarding.cancel'), { parse_mode: 'Markdown' });
   });
   
   // ============ HANDLERS ============
   
+  async function handleLanguage(ctx, text) {
+    const langMap = { 'Indonesia': 'id', 'English': 'en', '日本語': 'ja', '한국어': 'ko', '中文': 'zh' };
+    const lang = langMap[Object.keys(langMap).find(k => text.includes(k))] || 'en';
+    
+    ctx.session.language = lang;
+    ctx.session.step = 'age';
+    ctx.session.state = 'onboarding_age';
+    
+    await ctx.reply(t(ctx, 'onboarding.ask_age'), {
+      parse_mode: 'Markdown',
+      reply_markup: { remove_keyboard: true }
+    });
+  }
+  
   async function handleAge(ctx, text) {
     const age = parseInt(text);
-    if (isNaN(age) || age < 1 || age > 99) {
-      await ctx.reply('❌ Ketik angka valid (1-99):');
+    if (isNaN(age) || age < config.MIN_AGE || age > config.MAX_AGE) {
+      await ctx.reply(t(ctx, 'onboarding.invalid_age'));
       return;
     }
     
-    // Check if under 18
-    ctx.session.isUnderage = age < 18;
-    
     ctx.session.age = age;
+    ctx.session._age_claimed = age;
+    ctx.session._age_verify_trap = Math.random() < 0.5 ? 'word' : 'year';
+    ctx.session.step = 'age_verify';
+    ctx.session.state = 'onboarding_age_verify';
+    
+    const traps = {
+      word: '🔎 Verifikasi: Ketik usia kamu dalam huruf.\nContoh: "delapan belas"',
+      year: '🔎 Verifikasi: Tahun berapa kamu lahir?\nContoh: "2008"'
+    };
+    
+    await ctx.reply(traps[ctx.session._age_verify_trap], { parse_mode: 'Markdown' });
+  }
+
+  async function handleAgeVerify(ctx, text) {
+    const claimedAge = ctx.session._age_claimed;
+    const trapType = ctx.session._age_verify_trap;
+    let consistent = false;
+
+    if (trapType === 'word') {
+      const parsed = parseIndonesianNumber(text);
+      consistent = parsed === claimedAge;
+    } else {
+      const birthYear = parseInt(text.replace(/\D/g, ''));
+      if (!isNaN(birthYear) && birthYear > 1900 && birthYear < 2026) {
+        const calculatedAge = 2026 - birthYear;
+        consistent = Math.abs(calculatedAge - claimedAge) <= 1;
+      }
+    }
+
+    if (!consistent) {
+      console.log(`⚠️ Age verification failed for user ${ctx.from.id}: claimed=${claimedAge}, trap=${trapType}, answer="${text}"`);
+      ctx.session._age_verified = false;
+    } else {
+      ctx.session._age_verified = true;
+    }
+
     ctx.session.step = 'gender';
     ctx.session.state = 'onboarding_gender';
     
-    // Different welcome for underage
-    if (ctx.session.isUnderage) {
-      await ctx.reply(
-        `*👋 Welcome!*\n\n` +
-        `Usia kamu: ${age} tahun\n` +
-        `🔒 Kamu akan menggunakan mode *Random* (acak) saja.\n\n` +
-        `*Pilih gender:*`,
-        { parse_mode: 'Markdown', reply_markup: genderKeyboard }
-      );
-    } else {
-      await ctx.reply('*Pilih gender:*', {
-        parse_mode: 'Markdown',
-        reply_markup: genderKeyboard
-      });
-    }
+    await ctx.reply(t(ctx, 'onboarding.ask_gender'), {
+      parse_mode: 'Markdown',
+      reply_markup: genderKeyboard
+    });
   }
   
   async function handleGender(ctx, text) {
-    let gender = text.includes('Male') ? 'M' : text.includes('Female') ? 'F' : 'O';
+    let gender = text.includes('Male') ? 'M' : 'F';
     ctx.session.gender = gender;
     ctx.session.step = 'location';
     ctx.session.state = 'onboarding_location';
     
-    await ctx.reply('*Ketik lokasi:* (kota)',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply(t(ctx, 'onboarding.ask_location'), { parse_mode: 'Markdown' });
   }
   
   async function handleLocation(ctx, text) {
-    ctx.session.location = text;
-    ctx.session.step = 'language';
-    ctx.session.state = 'onboarding_language';
+    const location = text.trim();
     
-    const langKeys = new Keyboard();
-    for (const [code, label] of Object.entries(config.LANGUAGE_OPTIONS)) {
-      langKeys.text(label);
-      if (['id', 'en'].includes(code)) langKeys.row();
+    if (location.length < 2 || location.length > 50) {
+      await ctx.reply(t(ctx, 'onboarding.invalid_location'));
+      return;
     }
     
-    await ctx.reply('*Pilih bahasa:*', {
-      parse_mode: 'Markdown',
-      reply_markup: langKeys
-    });
-  }
-  
-  async function handleLanguage(ctx, text) {
-    const langMap = { 'Indonesia': 'id', 'English': 'en', '日本語': 'ja', '한국어': 'ko', '中文': 'zh' };
-    const lang = langMap[text.split(' ')[0]] || 'en';
-    
-    ctx.session.language = lang;
-    ctx.session.step = 'preference';
-    ctx.session.state = 'onboarding_preference';
-    
-    await showPreferenceSelection(ctx);
-  }
-  
-  async function showPreferenceSelection(ctx, errorMsg = '') {
-    const unlocked = ctx.session.unlocked || [];
-    const isUnderage = ctx.session.isUnderage;
-    
-    const prefKeys = new InlineKeyboard();
-    prefKeys.text('🎲 Random (Gratis)', 'preference:random');
-    
-    // Only show 18+ for users 18+
-    if (!isUnderage) {
-      prefKeys.row();
-      prefKeys.text('🔞 18+ (⭐ 50)', unlocked.includes('18+') ? 'preference:18+' : 'premium_select:18+');
-    }
-    
-    let msg = '*Pilih preferensi:*';
-    if (isUnderage) {
-      msg = '*🔒 Kamu berusia di bawah 18*\n\nHanya mode Random yang tersedia.\n\n*Pilih preferensi:*';
-    }
-    
-    const finalMsg = errorMsg ? `*${errorMsg}*\n\n${isUnderage ? 'Hanya Random tersedia.' : ''}*Pilih preferensi:*` : msg;
-    await ctx.reply(finalMsg, { parse_mode: 'Markdown', reply_markup: prefKeys });
-  }
-  
-  async function showGenderPrefSelection(ctx) {
-    const genderPrefKeys = new InlineKeyboard();
-    genderPrefKeys.text('👩 Female', 'gender_pref:F');
-    genderPrefKeys.text('👨 Male', 'gender_pref:M');
-    genderPrefKeys.row();
-    genderPrefKeys.text('🌈 Semua Gender', 'gender_pref:all');
-    
-    await ctx.editMessageText(
-      `*👄 Pilih gender partner untuk 18+:*\n\nSiapa yang ingin kamu chat?`,
-      { parse_mode: 'Markdown', reply_markup: genderPrefKeys }
-    );
-  }
-  
-  async function handlePremiumSelect(ctx, preference) {
-    const unlocked = ctx.session.unlocked || [];
-    if (unlocked.includes(preference)) {
-      // Already unlocked, go to gender preference for 18+
-      if (preference === '18+') {
-        await showGenderPrefSelection(ctx);
+    ctx.session.location = location;
+
+    const referredBy = ctx.session.referred_by;
+
+    const ageVerified = ctx.session._age_verified === true;
+    const claimedAge = ctx.session._age_claimed || ctx.session.age;
+
+    let bracket = getAgeBracket(claimedAge) || 'minor';
+
+    // Moderation gate: quarantine = tidak boleh masuk pool; bracket_locked = ratchet permanen
+    try {
+      const modInfo = getModerationInfo(ctx.from.id);
+      if (modInfo?.quarantined_at) {
+        console.log(`🛑 Quarantined user ${ctx.from.id} blocked from pool (${modInfo.quarantine_reason})`);
+        ctx.session.state = null;
+        await ctx.reply(t(ctx, 'moderation.quarantine_blocked'), { parse_mode: 'Markdown' });
         return;
       }
-      await showPreferenceSelection(ctx);
-      return;
+      if (modInfo?.bracket_locked === 'minor' || modInfo?.trust_level === 'flagged') {
+        console.log(`🔒 User ${ctx.from.id} locked to minor pool (locked=${modInfo?.bracket_locked}, trust=${modInfo?.trust_level})`);
+        bracket = 'minor';
+      }
+    } catch (e) {}
+
+    // Age verify failed → force minor bracket
+    if (!ageVerified && bracket !== 'minor') {
+      console.log(`🚨 User ${ctx.from.id} age verify FAILED (claimed ${claimedAge}) → forced to minor bracket`);
+      bracket = 'minor';
     }
-    
-    const feature = config.PREMIUM_FEATURES[preference];
-    const payKeys = new InlineKeyboard();
-    payKeys.text(`⭐ Beli ${feature.price}`, `payment:buy:${preference}`);
-    payKeys.row();
-    payKeys.text('🔙', 'preference:back');
-    
-    await ctx.editMessageText(
-      `*🔒 ${feature.name}*\n\n${feature.description}\n\nHarga: ⭐ ${feature.price}\n\nKlik untuk simulate payment:`,
-      { parse_mode: 'Markdown', reply_markup: payKeys }
-    );
-  }
-  
-  async function handlePayment(ctx, preference) {
-    const feature = config.PREMIUM_FEATURES[preference];
-    const verifyKeys = new InlineKeyboard();
-    verifyKeys.text('✅ Saya sudah membayar', `payment:verify:${preference}`);
-    verifyKeys.row();
-    verifyKeys.text('❌ Batal', 'preference:back');
-    
-    await ctx.editMessageText(
-      `*💳 Pembayaran (Simulasi)*\n\n` +
-      `1. Buka Settings > Stars\n` +
-      `2. Beli ⭐ ${feature.price}\n` +
-      `3. Klik bawah setelah membayar:\n\n(Simulation - click verify)`,
-      { parse_mode: 'Markdown', reply_markup: verifyKeys }
-    );
-  }
-  
-  async function handlePaymentVerify(ctx, preference) {
-    const feature = config.PREMIUM_FEATURES[preference];
-    
-    if (!ctx.session.unlocked) ctx.session.unlocked = [];
-    ctx.session.unlocked.push(preference);
-    
-    // If 18+, ask for gender preference after unlock
-    if (preference === '18+') {
-      await ctx.editMessageText(
-        `*✅ Berhasil di-unlock!*\n\n${feature.name} aktif!`,
-        { parse_mode: 'Markdown' }
-      );
-      await showGenderPrefSelection(ctx);
-      return;
-    }
-    
-    await ctx.editMessageText(
-      `*✅ Berhasil di-unlock!*\n\n${feature.name} aktif!\n\nSilakan pilih preferensi:`,
-      { parse_mode: 'Markdown' }
-    );
-    await showPreferenceSelection(ctx);
-  }
-  
-  async function handleGenderPrefSelected(ctx, genderPref) {
-    ctx.session.gender_pref = genderPref;
-    
-    // Now proceed with preference selection
-    const preference = '18+';
-    await handlePreferenceSelected(ctx, preference);
-  }
-  
-  async function handlePreferenceSelected(ctx, preference) {
-    const userId = ctx.from.id;
-    
-    let genderPrefs = ['M', 'F', 'O'];
-    const genderPref = ctx.session.gender_pref;
-    
-    // Custom gender preference for 18+ mode
-    if (preference === '18+' && genderPref && genderPref !== 'all') {
-      genderPrefs = [genderPref];
-    }
-    
+
+    const bracketForced = bracket !== getAgeBracket(claimedAge);
+    const trustLevel = (!ageVerified && claimedAge >= 18) || bracketForced ? 'flagged' : 'shadow';
+
+    // Persist trust level to DB
+    try {
+      updateUserProfile(ctx.from.id, {
+        trust_level: trustLevel,
+        age_verified: ageVerified ? 1 : 0
+      });
+    } catch (e) {}
+
     const user = {
-      user_id: userId,
-      name: ctx.from.first_name, // Only stored temporarily
-      age: ctx.session.age,
+      user_id: ctx.from.id,
+      name: ctx.from.first_name,
+      age: claimedAge,
       gender: ctx.session.gender,
-      location: ctx.session.location,
+      location: location,
       language: ctx.session.language,
-      preference: preference,
-      gender_prefs: genderPrefs,
-      age_min: 18,
-      age_max: 99,
-      is_premium: preference !== 'random'
+      _ageBracket: bracket,
+      _ageVerified: ageVerified,
+      trust_level: trustLevel
     };
     
-    // Add to pool
-    await poolService.addToPool(user);
+    const hasPriority = (ctx.session.inventory?.priority_match || 0) > 0;
+    await poolService.addToPool(user, hasPriority);
     
     ctx.session.state = 'waiting';
     ctx.session.user = user;
-    ctx.session.anonymous_id = anonymizeUserId(userId);
+    ctx.session.anonymous_id = anonymizeUserId(ctx.from.id);
+
+    // Process referral reward if this user was referred
+    if (referredBy && referredBy !== user.user_id) {
+      await processReferral(ctx, referredBy, user);
+    }
     
-    // Show success with ANONYMOUS profile
-    await ctx.editMessageText(
-      `*✅ Berhasil!*\n\n` +
-      `🔒 *Identitas tersamarkan*\n\n` +
-      `📝 Profil (publik):\n` +
-      `• Usia: ${user.age}\n` +
-      `• Gender: ${user.gender}\n` +
-      `• Lokasi: ${user.location}\n` +
-      `• Bahasa: ${user.language}\n` +
-      `• Preferensi: ${user.preference}\n\n` +
-      `⏳ Mencari partner...`,
+    await ctx.reply(
+      t(ctx, 'onboarding.success', {
+        lang: config.LANGUAGE_OPTIONS[user.language] || user.language,
+        age: user.age,
+        gender: user.gender,
+        location: user.location
+      }),
       { parse_mode: 'Markdown' }
     );
     
-    // Try match
     await tryMatch(ctx, user);
   }
   
+  async function processReferral(ctx, referrerId, newUser) {
+    try {
+      incrementReferralCount(referrerId);
+      const count = getReferralCount(referrerId);
+
+      const inviterLang = 'id';
+      await xpService.addXP(referrerId, 'session', {}, 5);
+      const newAchs = achievementService.check(referrerId, 'session', { profile: xpService.getProfile(referrerId) });
+      await notifyAchievements(bot.api, referrerId, newAchs, inviterLang);
+
+      await bot.api.sendMessage(referrerId,
+        tLang(inviterLang, 'referral.inviter_reward', { count }),
+        { parse_mode: 'Markdown' }
+      );
+
+      const lang = ctx.session.language || 'id';
+      ctx.session.inventory.xp_booster = { expires_at: Date.now() + 2 * 60 * 60 * 1000 };
+
+      await ctx.reply(
+        t(ctx, 'referral.invitee_reward'),
+        { parse_mode: 'Markdown' }
+      );
+    } catch (e) {
+      console.error('Referral reward error:', e.message);
+    }
+  }
+
   async function tryMatch(ctx, user) {
     const match = await poolService.findMatch(user);
-    
+
     if (match) {
       await poolService.removeFromPool(user.user_id);
       await poolService.removeFromPool(match.user_id);
-      
-      // Create session with anonymous profiles
+
       await sessionService.createSession(user.user_id, match.user_id, user, match);
+
+      for (const uid of [user.user_id, match.user_id]) {
+        const booster = ctx.session.inventory?.xp_booster;
+        const xpMult = (booster && booster.expires_at > Date.now()) ? 2 : 1;
+        const xpRes = xpService.addXP(uid, 'session', {}, xpMult);
+        if (xpRes) {
+          const lang = uid === user.user_id ? ctx.session.language : match.language;
+          const newAchs = achievementService.check(uid, 'session', { profile: xpService.getProfile(uid) });
+          await notifyAchievements(bot.api, uid, newAchs, lang);
+          await notifyLevelUp(bot.api, uid, xpRes, lang);
+        }
+      }
+
+      // Consume priority match if used by current user
+      if (ctx.session.inventory?.priority_match > 0) {
+        ctx.session.inventory.priority_match--;
+      }
       
-      // Show ANONYMOUS partner info
-      const partnerMsg = config.PARTNER_FOUND_MESSAGE
-        .replace('{age}', match.age)
-        .replace('{gender}', match.gender)
-        .replace('{location}', match.location)
-        .replace('{language}', config.LANGUAGE_OPTIONS[match.language] || match.language);
+      await ctx.reply(
+        t(ctx, 'onboarding.partner_found', {
+          age: match.age,
+          gender: match.gender,
+          location: match.location,
+          language: config.LANGUAGE_OPTIONS[match.language] || match.language
+        }),
+        { parse_mode: 'Markdown' }
+      );
       
-      await ctx.reply(partnerMsg, { parse_mode: 'Markdown' });
-      
-      // Get bot instance to notify partner (need to pass bot)
       return match;
     } else {
-      await ctx.reply('⏳ Belum ketemu... Tunggu ya!\nKetik /cancel untuk cancel.');
+      await ctx.reply(t(ctx, 'onboarding.waiting'), { parse_mode: 'Markdown' });
     }
   }
 }

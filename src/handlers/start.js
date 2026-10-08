@@ -1,123 +1,141 @@
 import { Keyboard, InlineKeyboard } from 'grammy';
+import { t } from '../locales/index.js';
 
-export function registerStartHandler(bot, { config, poolService, sessionService }) {
-  // /start command
+export function registerStartHandler(bot, { config, poolService, sessionService, xpService }) {
   bot.command('start', async (ctx) => {
     const userId = ctx.from.id;
-    
-    // Check if already in session
+
     if (sessionService.isInSession(userId)) {
-      await ctx.reply('❌ Kamu sedang dalam sesi chat.\nKetik /skip untuk keluar.');
+      await ctx.reply(t(ctx, 'start.already_in_session'), { parse_mode: 'Markdown' });
       return;
     }
-    
-    // Check if already in pool
+
     if (poolService.isInPool(userId)) {
-      await ctx.reply('⏳ Sedang mencari partner...\nKetik /cancel untuk cancel.');
+      await ctx.reply(t(ctx, 'start.already_in_pool'), { parse_mode: 'Markdown' });
       return;
     }
-    
-    // Reset session
+
+    // Cek skip cooldown
+    const cooldown = poolService.getSkipCooldown(userId);
+    if (cooldown > 0) {
+      const isSpam = poolService.isSpamSkipping(userId);
+      let msg = isSpam
+        ? `⚠️ *Skip berulang terdeteksi.*\nMohon tunggu *${cooldown} detik* sebelum mencari partner baru.`
+        : `⏳ Mohon tunggu *${cooldown} detik* sebelum mencari partner baru.`;
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    xpService.ensureProfile(userId);
+    const profile = xpService.getProfile(userId);
+
+    const inv = ctx.session?.inventory || {};
     ctx.session = {
-      state: 'onboarding_age',
-      step: 'age',
-      unlocked: ctx.session?.unlocked || [] // Keep unlocked premium features
+      state: 'onboarding_language',
+      step: 'language',
+      inventory: inv
     };
-    
-    // Show welcome and ask age
-    await ctx.reply(config.WELCOME_MESSAGE, {
-      parse_mode: 'Markdown'
-    });
-    
-    await ctx.reply('*Ketik usia kamu:*', {
+
+    // Parse referral from deep link: t.me/bot?start=ref_USERID
+    const match = ctx.match;
+    if (match && typeof match === 'string' && match.startsWith('ref_')) {
+      const referrerId = parseInt(match.replace('ref_', ''));
+      if (referrerId && referrerId !== userId) {
+        ctx.session.referred_by = referrerId;
+      }
+    }
+
+    let welcomeMsg;
+    if (profile && profile.level > 0) {
+      const streakFire = profile.streak >= 7 ? '🔥' : profile.streak >= 3 ? '✨' : '';
+      welcomeMsg = t(ctx, 'start.welcome_back', {
+        level: profile.level,
+        xp: profile.xp,
+        streakFire,
+        streak: profile.streak,
+        sessions: profile.total_sessions,
+        messages: profile.total_messages
+      });
+    } else {
+      welcomeMsg = t(ctx, 'start.welcome_new');
+    }
+
+    const langKeys = new Keyboard();
+    for (const [code, label] of Object.entries(config.LANGUAGE_OPTIONS)) {
+      langKeys.text(label);
+      if (['id', 'en'].includes(code)) langKeys.row();
+    }
+
+    await ctx.reply(welcomeMsg, {
       parse_mode: 'Markdown',
-      reply_markup: { remove_keyboard: true }
+      reply_markup: langKeys
     });
   });
+
+  bot.command('invite', async (ctx) => {
+    const userId = ctx.from.id;
+    const botUsername = ctx.me?.username || 'Randomchatzbot';
+    const link = `https://t.me/${botUsername}?start=ref_${userId}`;
+    const { getReferralCount } = await import('../database/db.js');
+    const count = getReferralCount(userId);
+    await ctx.reply(
+      t(ctx, 'start.invite_text', { link, count }),
+      { parse_mode: 'Markdown', disable_web_page_preview: true }
+    );
+  });
   
-  // /help command
   bot.command('help', async (ctx) => {
     const userId = ctx.from.id;
-    const isAdmin = [746661594].includes(userId);
+    const isAdmin = config.ADMIN_IDS.includes(userId);
     
-    let helpText = `*📖 Help*
-
-*Commands:*
-/start — Mulai cari chat random
-/skip — Keluar dari chat
-/cancel — Cancel pencarian
-/report — Laporkan partner
-/myprofile — Lihat profil
-/stats — Lihat statistik bot
-
-*Fitur:*
-📸 *Phantom Photo* — Foto auto-delete 10 detik
-🚫 Screenshot/Share = Banned
-
-*Fitur Premium (Telegram Stars):*
-• 🔞 18+ Mode — Chat dengan user dewasa
-
-_Beli Stars di Settings > Stars_`;
-
-    // Add admin commands if user is admin
+    let helpText = t(ctx, 'start.help_commands');
     if (isAdmin) {
-      helpText += `\n\n*👑 Admin Commands:*
-/adminphotos [n] — Lihat n foto terbaru
-/admindb — Download database file
-/adminquery [SQL] — Query database`;
+      helpText += t(ctx, 'start.help_admin');
     }
     
     await ctx.reply(helpText, { parse_mode: 'Markdown' });
   });
   
-  // /stats command
   bot.command('stats', async (ctx) => {
-    await ctx.reply(`*📊 Stats*
-
-Waiting: ${poolService.getPoolSize()}
-Active Sessions: ${sessionService.getActiveSessions()}`,
-      { parse_mode: 'Markdown' }
-    );
+    const userBracket = ctx.session?.user?._ageBracket;
+    let bracketInfo = '';
+    if (userBracket) {
+      const count = poolService.getBracketSize(userBracket);
+      bracketInfo = `\n👥 Bracket ${userBracket}: ${count} waiting`;
+    }
+    await ctx.reply(t(ctx, 'start.stats', {
+      pool: poolService.getPoolSize(),
+      sessions: sessionService.getActiveSessions()
+    }) + bracketInfo, { parse_mode: 'Markdown' });
   });
   
-  // /cancel command
   bot.command('cancel', async (ctx) => {
     const userId = ctx.from.id;
     
     if (poolService.isInPool(userId)) {
       await poolService.removeFromPool(userId);
-      await ctx.reply('*✅ Pencarian dibatalkan.*\n\nKetik /start untuk mulai lagi.',
-        { parse_mode: 'Markdown' }
-      );
+      await ctx.reply(t(ctx, 'start.cancel_success'), { parse_mode: 'Markdown' });
     } else {
-      await ctx.reply('❌ Tidak ada pencarian aktif.');
+      await ctx.reply(t(ctx, 'start.cancel_none'));
     }
   });
   
-  // /myprofile command
   bot.command('myprofile', async (ctx) => {
     const user = ctx.session.user;
-    const unlocked = ctx.session.unlocked || [];
     
     if (!user) {
-      await ctx.reply('❌ Profil belum ada. Ketik /start untuk buat profil.',
-        { parse_mode: 'Markdown' }
-      );
+      await ctx.reply(t(ctx, 'start.no_profile'), { parse_mode: 'Markdown' });
       return;
     }
     
-    const premiumList = unlocked.length > 0 
-      ? `\n*Premium:* ${unlocked.join(', ')}`
-      : '\n*Premium:* -';
-    
     await ctx.reply(
-      `*👤 Profil Kamu*\n\n` +
-      `• Usia: ${user.age}\n` +
-      `• Gender: ${user.gender}\n` +
-      `• Lokasi: ${user.location}\n` +
-      `• Bahasa: ${user.language}\n` +
-      `• Preferensi: ${user.preference}` +
-      premiumList,
+      `${t(ctx, 'start.profile_title')}\n\n` +
+      t(ctx, 'start.profile_detail', {
+        age: user.age,
+        gender: user.gender,
+        location: user.location,
+        language: user.language
+      }),
       { parse_mode: 'Markdown' }
     );
   });

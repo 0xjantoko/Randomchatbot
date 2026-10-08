@@ -6,11 +6,20 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "build:admin": "vite build",
+    "dev:admin": "vite dev --root src/admin/frontend"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.0.0",
+    "vite": "^6.0.0"
   },
   "dependencies": {
+    "@rolldown/binding-win32-x64-msvc": "^1.0.2",
     "better-sqlite3": "^12.8.0",
     "dotenv": "^16.4.0",
+    "express": "^5.2.1",
     "grammy": "^1.25.0"
   },
   "engines": {

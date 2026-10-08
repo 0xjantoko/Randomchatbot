@@ -4,9 +4,12 @@
  */
 
 import express from 'express';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { getQuarantinedUsers, clearQuarantine, clearBracketLock } from '../database/db.js';
+import { listEvidenceMeta, readEvidence, evidenceCount } from '../services/evidence.js';
+import { anonymizeUserId } from '../utils/privacy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +35,13 @@ try {
 }
 
 const ADMIN_PORT = process.env.ADMIN_PORT || 3001;
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'change-this-secret-key';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+
+if (!ADMIN_API_KEY) {
+  console.error('❌ FATAL: ADMIN_API_KEY environment variable is required.');
+  console.error('   Set it via: export ADMIN_API_KEY="your-secure-random-key"');
+  process.exit(1);
+}
 
 const app = express();
 
@@ -48,9 +57,95 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Serve static dashboard
+// Auth middleware for SSE (query param or header)
+function requireAuthSSE(req, res, next) {
+  const apiKey = req.query.apiKey || req.headers['x-api-key'];
+  if (apiKey !== ADMIN_API_KEY) {
+    res.writeHead(401);
+    res.end();
+    return;
+  }
+  next();
+}
+
+// Serve static dashboard (Svelte build preferred, fallback to vanilla HTML)
+const distPath = path.join(__dirname, '../../dist/admin');
+const hasSvelteBuild = existsSync(path.join(distPath, 'index.html'));
+
+app.use('/admin', express.static(distPath));
+
 app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  // Redirect /admin → /admin/ so static middleware serves index.html
+  if (hasSvelteBuild) {
+    res.redirect(301, '/admin/');
+  } else {
+    res.sendFile(path.join(__dirname, 'dashboard.html'));
+  }
+});
+
+// ============ SSE Traffic Stream ============
+
+let poolService = null;
+let sessionService = null;
+
+export function setTrafficServices(pool, session) {
+  poolService = pool;
+  sessionService = session;
+}
+
+function getTrafficSnapshot() {
+  const poolSize = poolService ? poolService.getPoolSize() : 0;
+  const activeSessions = sessionService ? sessionService.getActiveSessions() : 0;
+  const current = metrics.getCurrent();
+
+  return {
+    timestamp: Date.now(),
+    pool_waiting: poolSize,
+    active_sessions: activeSessions,
+    users_online: activeSessions * 2,
+    messages_total: current.messages_total,
+    messages_per_sec: current.messages_per_sec,
+    photos_total: current.photos_total,
+    sessions_started: current.sessions_started,
+    violations_total: current.violations_total,
+    bans_total: current.bans_total,
+    voice_total: current.voice_total
+  };
+}
+
+// SSE endpoint — pushes traffic snapshot every 2 seconds
+app.get('/admin/api/traffic/stream', requireAuthSSE, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  // Send initial snapshot
+  res.write(`data: ${JSON.stringify(getTrafficSnapshot())}\n\n`);
+
+  const interval = setInterval(() => {
+    res.write(`data: ${JSON.stringify(getTrafficSnapshot())}\n\n`);
+  }, 2000);
+
+  req.on('close', () => {
+    clearInterval(interval);
+  });
+});
+
+// REST: Get traffic snapshot (for initial load)
+app.get('/admin/api/traffic', requireAuth, (req, res) => {
+  res.json(getTrafficSnapshot());
+});
+
+// REST: Get active users list (anonymized)
+app.get('/admin/api/active-users', requireAuth, (req, res) => {
+  if (!sessionService) {
+    return res.json({ users: [] });
+  }
+  const users = sessionService.getAllSessions();
+  res.json({ users });
 });
 
 // API: Get all metrics
@@ -99,16 +194,62 @@ app.get('/admin/api/system', requireAuth, (req, res) => {
   });
 });
 
+// API: Quarantine queue (bracket-breach review) — user tetap anonim (Anon-XXXX)
+app.get('/admin/api/quarantine', requireAuth, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const users = getQuarantinedUsers(limit).map(u => ({
+    anon_id: anonymizeUserId(u.user_id),
+    user_id: u.user_id,
+    quarantined_at: u.quarantined_at,
+    reason: u.quarantine_reason,
+    bracket_locked: u.bracket_locked,
+    trust_level: u.trust_level
+  }));
+  res.json({ count: users.length, users });
+});
+
+// API: Release a user from quarantine (admin review lulus)
+app.post('/admin/api/quarantine/:userId/release', requireAuth, (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId)) {
+    return res.status(400).json({ error: 'Invalid userId' });
+  }
+  clearQuarantine(userId);
+  if (req.body?.unlock_bracket === true) clearBracketLock(userId);
+  logger.warn('quarantine_release', { userId, by: 'admin_api' });
+  res.json({ ok: true, userId, bracket_unlocked: req.body?.unlock_bracket === true });
+});
+
+// API: Bukti (transcript terenkripsi, admin only) — metadata
+app.get('/admin/api/evidence', requireAuth, (req, res) => {
+  const userId = req.query.userId ? Number(req.query.userId) : null;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const items = listEvidenceMeta({ userId: Number.isInteger(userId) ? userId : null, limit });
+  res.json({ count: items.length, total: evidenceCount(), items });
+});
+
+// API: Bukti — isi transcript (didekripsi)
+app.get('/admin/api/evidence/:id', requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+  const row = readEvidence(id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  res.json({ evidence: row });
+});
+
 // Health check (no auth)
 app.get('/admin/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 // Start server
-export function startAdminServer() {
+export function startAdminServer(poolSvc, sessionSvc) {
+  if (poolSvc) poolService = poolSvc;
+  if (sessionSvc) sessionService = sessionSvc;
+
   const server = app.listen(ADMIN_PORT, () => {
     console.log(`✅ Admin Panel: http://localhost:${ADMIN_PORT}/admin`);
-    console.log(`   API Key: ${ADMIN_API_KEY}`);
+    console.log(`   API Key configured (env: ADMIN_API_KEY)`);
     logger.info('admin', { message: 'Admin server started', port: ADMIN_PORT });
   });
   

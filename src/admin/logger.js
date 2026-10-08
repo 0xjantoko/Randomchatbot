@@ -11,7 +11,11 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Encryption config
-const ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+let ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY || Buffer.from(ENCRYPTION_KEY, 'hex').length !== 32) {
+  ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️ LOG_ENCRYPTION_KEY invalid/missing, using random key (logs undecryptable after restart)');
+}
 const KEY_BUFFER = Buffer.from(ENCRYPTION_KEY, 'hex');
 const LOG_DIR = process.env.LOG_DIR || path.join(__dirname, '../../logs');
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file

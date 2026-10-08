@@ -1,4 +1,5 @@
 import { getDb } from '../database/db.js';
+import { getActiveBans, cleanupExpiredBans } from '../database/db.js';
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -9,14 +10,18 @@ class BannedCache {
   }
 
   init() {
+    cleanupExpiredBans();
     this.refresh();
-    this._interval = setInterval(() => this.refresh(), REFRESH_INTERVAL);
+    this._interval = setInterval(() => {
+      cleanupExpiredBans();
+      this.refresh();
+    }, REFRESH_INTERVAL);
     this._interval.unref();
   }
 
   refresh() {
     try {
-      const rows = getDb().prepare('SELECT user_id FROM bans').all();
+      const rows = getActiveBans();
       this.cache = new Set(rows.map(r => r.user_id));
     } catch (e) {
       console.error('Banned cache refresh error:', e.message);

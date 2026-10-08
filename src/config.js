@@ -5,6 +5,9 @@ export default {
   // Bot Configuration
   BOT_TOKEN: process.env.BOT_TOKEN || '',
   
+  // Admin
+  ADMIN_IDS: process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [746661594],
+  
   // Database
   DB_PATH: process.env.DB_PATH || './data.db',
   
@@ -15,24 +18,18 @@ export default {
   
   // Session
   SESSION_TIMEOUT: parseInt(process.env.SESSION_TIMEOUT || '3600'),
-  
-  // Telegram Stars Pricing
-  STAR_PRICES: {
-    '18+': parseInt(process.env.STAR_PRICE_18 || '50')
-  },
-  
-  PREMIUM_FEATURES: {
-    '18+': { 
-      name: '🔞 18+ Mode', 
-      price: 50,
-      description: 'Unlock chat with 18+ users'
-    }
-  },
+
+  // Moderation & retention (P1)
+  // Pool Minor: partner yang sama tidak boleh di-match ulang dalam N jam
+  MINOR_REMATCH_HOURS: parseInt(process.env.MINOR_REMATCH_HOURS || '24'),
+  // Bukti (transcript terenkripsi) disimpan N hari, lalu dipangkas otomatis
+  EVIDENCE_TTL_DAYS: parseInt(process.env.EVIDENCE_TTL_DAYS || '30'),
+  EVIDENCE_MAX_MESSAGES: parseInt(process.env.EVIDENCE_MAX_MESSAGES || '20'),
   
   // Privacy Settings
   ANONYMITY: {
-    // Hash Telegram ID to create anonymous ID
-    HASH_SECRET: process.env.HASH_SECRET || 'randomchat_secret_key',
+    // Hash Telegram ID to create anonymous ID (enforced at startup via privacy.js)
+    HASH_SECRET: process.env.HASH_SECRET,
     
     // Hide these from partner
     HIDE_USERNAME: true,
@@ -41,16 +38,15 @@ export default {
     HIDE_BIO: true,
     
     // Only show profile info
-    SHOW_PROFILE: ['age', 'gender', 'location', 'language', 'preference']
+    SHOW_PROFILE: ['age', 'gender', 'location', 'language']
   },
   
   // Messages
-  WELCOME_MESSAGE: `👋 Halo! Welcome ke *RandomChat*
+  WELCOME_MESSAGE: `👋 Halo! Selamat datang di *RandomChatZ*
 
-Saya akan mencarikanmu teman chat secara random!
-🔒 Privasi kamu terjamin - identitas disamarkan.
+🔒 Privasi kamu terjamin — identitas disamarkan.
 
-*Berapa usia kamu?*`,
+*Pilih bahasa kamu:*`,
   
   PARTNER_FOUND_MESSAGE: `*🎉 Partner ditemukan!*
 
@@ -71,20 +67,15 @@ Ketik /start untuk cari chat baru.`,
   
   LANGUAGE_OPTIONS: {
     'id': '🇮🇩 Indonesia',
-    'en': '🇺🇸 English',
-    'ja': '🇯🇵 日本語',
-    'ko': '🇰🇷 한국어',
-    'zh': '🇨🇳 中文'
+    'en': '🇺🇸 English'
   },
   
   GENDER_OPTIONS: {
     'M': '👨 Male',
     'F': '👩 Female',
-    'O': '🌈 Other'
   },
   
   PREFERENCE_OPTIONS: {
-    'random': '🎲 Random — Gratis!',
-    '18+': '🔞 18+ Only — ⭐ 50 Stars'
+    'random': '🎲 Random'
   }
 };

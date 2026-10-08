@@ -8,9 +8,19 @@ node_modules/
 # Logs
 *.log
 bot.log
+logs/
+
+# Database (data user — jangan ikut deploy)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Build
 dist/
+
+# Artefak terenkripsi
+*.enc
 
 # OS
 .DS_Store
