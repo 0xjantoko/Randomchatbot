@@ -1,6 +1,6 @@
 # Privacy & Security Policy — Random Chat Bot
 
-Terakhir diperbarui: 2026-07-11
+Terakhir diperbarui: 2026-09-30
 
 ## Prinsip
 
@@ -14,6 +14,8 @@ Bot ini adalah ruang chat **anonim berbasis pool**. Yang dijanjikan:
    **diblokir dari diteruskan ke partner** — di semua pool, pada teks maupun
    caption foto. Pesan pelanggar dicatat sebagai violation (migration →
    strike/freeze; personal_info → auto-ban pada hitungan ke-3).
+   Tipe pesan yang tak didukung (video_note, dokumen, lokasi, poll, dll)
+   juga tak pernah diteruskan (fail-closed).
 3. **Konten intra-pool bebas.** Bot **tidak memfilter** konten seksual antara
    dua user dewasa, maupun antara dua minor, selama tetap di dalam pool.
    Perlindungan minor dari grooming/hunting adult dilakukan lewat pemisahan

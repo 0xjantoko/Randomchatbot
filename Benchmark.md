@@ -196,4 +196,58 @@ VPS RAM needed          512 MB      512 MB      1 GB       1 GB*
 
 ---
 
-*Generated: 23 May 2026 — Node.js v26.1.0 — RandomChatbot v1.1.0*
+## 9. Full-Pipeline Load Test (30 September 2026)
+
+Metodologi baru — **pipeline NYATA, bukan micro-benchmark terisolasi**: `addToPool → findMatch → createSession → 10 msg/orang (rateLimiter + checkViolation R2 + evidence + contextParameter) → endSession`. Distribusi 15% minor / 55% 20s / 30% 30plus, 60% id / 40% en, DB segar per skala. Script: `scripts/simulate-load.mjs` (`node scripts/simulate-load.mjs [N]`).
+
+### Hasil per Fase — 100K user (sebelum → sesudah fix queue)
+
+```
+FASE                 SEBELUM        SESUDAH       DELTA
+1. addToPool          44.60s         472ms        -99% (94x, 211.864 user/dtk)
+2. match+session      921.75s        829.12s      -10% (60 pasang/dtk)
+3. msg pipeline       7.18s          8.50s        noise (58.836 pesan/dtk)
+4. endSession+drain   535.75s        457.60s      -15% (109 sesi/dtk)
+TOTAL                 ~1509s         ~1296s       -14%
+unmatched             4 → 2          (sisa ganjil bucket — normal)
+memori                173MB heap / 278MB RSS (stabil, tak bocor)
+```
+
+### Semua Skala (sesudah fix)
+
+| Skala | addToPool | match+session | msg pipeline | endSession | unmatched | mem |
+|-------|-----------|---------------|--------------|------------|-----------|-----|
+| 100 | 1ms | 701ms (48 pasang) | 14ms (480) | 1.39s | 4 | 12/75MB |
+| 1.000 | 10ms | 8.29s (500 pasang) | 135ms (5.000) | 7.01s | 0 | 13/82MB |
+| 100.000 | 472ms | 829.12s (49.999 pasang) | 8.50s (499.990) | 457.60s | 2 | 173/278MB |
+
+### Perbaikan Utama: `waitingQueue` O(n²) → O(1)
+
+`pool.js` — `waitingQueue.filter(...)` (salin array penuh per hapus) diganti `Set.delete()`. Insertion-order = FIFO tetap terjaga.
+
+```
+scripts/bench-queue.mjs 100000:
+  addToPool      44.6s → 477-525ms   (85-94x)
+  removeFromPool 132ms (800.000 user/dtk)
+  residual pool/queue: 0 / 0
+```
+
+### Temuan Kuantitatif
+
+| # | Temuan | Angka |
+|---|--------|-------|
+| 1 | Msg pipeline (R2 regex + evidence) **tak pernah bottleneck** | 58.836–69.625 pesan/dtk |
+| 2 | Memori sehat @100K user + 50K sesi | RSS 278MB — VPS 1GB cukup |
+| 3 | **`findMatch` O(bucket)/panggilan** — `pool.js:157` bangun array kandidat penuh sebelum memilih (sisa O(n²)) | ~10⁹ iterasi ≈ 829s fase match |
+| 4 | `endSession` DB-bound saat 50K serentak | 9.2ms/sesi — di produksi tersebar, tak menumpuk |
+| 5 | Bug simulator (bukan produk): user tanpa `_ageBracket` → minor tak pernah match (`checkAgeMatch` default min=18) | produksi aman (`onboarding.js:226` selalu set) |
+
+### Verdict Kapasitas
+
+- **Skala realistis (ratusan concurrent):** semua fase milisecond — headroom besar.
+- **100K serentak (ekstrem):** tak crash, memori stabil, drain ~22 menit.
+- Satu-satunya O(n²) tersisa: `findMatch` (kandidat #3) — fix terakhir dari struktur data.
+
+---
+
+*Generated: 23 May 2026 · Updated: 30 September 2026 — Node.js v26.1.0 — RandomChatbot v1.1.0*

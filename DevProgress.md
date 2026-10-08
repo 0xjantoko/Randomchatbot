@@ -629,4 +629,55 @@ After:  /start → Language → Age → Gender → Location → Pool
 
 ---
 
-*Last updated: 9 July 2026*
+## 12. Latest Updates (30 September 2026) — Security Hardening, Eval Gate, Load Test
+
+### 12.1 Rule Engine — Kepatuhan R1-R4 Penuh
+
+Kebijakan inti: **in-pool bebas (R1) · intersepsi keluar-pool (R2) · no cross-line (R3) · anti-hunting (R4)**.
+
+| Komitmen | Perubahan | Bukti |
+|----------|-----------|-------|
+| **R2 block-forward** | `chat.js` — blok warning kini punya `return` utk kategori `migration`+`personal_info` (semua pool). Sebelumnya pesan pelanggaran **tetap diteruskan ke partner** (5/8 kasus bocor) | `audit-rules.mjs`: **8/8 terblokir, celah 0** |
+| **Caption foto = teks** | `media.js` — `photo.caption` masuk `checkViolation` + block-forward | A1/A2 blocked, A3 foto polos lolos |
+| **Contact card** | catch-all menangkap `contact` → `checkViolation` → blokir + warning | A4 |
+| **Tipe jatuh tak senyap** | catch-all `video_note/document/location/poll/dice/dll` → **tidak diteruskan** + reply feedback + `logger.warn` + metric | A5 |
+| **Voice evidence** | file_id + pengirim masuk `recordEvidence` ring buffer (ikut terkunci saat sesi minor berakhir/breach) | suite |
+| **Batas ditulis jujur** | `PRIVACY.md` — screenshot, OCR foto, ASR voice, chat luar-bot, estimasi usia diakui eksplisit | — |
+
+**Invariant tak berubah:** bot TIDAK memfilter konten seksual intra-pool (`vcs`/`foto` lolos checkViolation — sengaja; pool minor ditangani grooming-EVICT terpisah).
+
+### 12.2 P0 — grammY Middleware Menelan Pesan
+
+`onboarding.js` + `chat.js` `message:text` handler `return` **tanpa `next()`** → handler pertama menelan SEMUA pesan teks dan mematikan semua command terdaftar setelahnya (`/skip`, `/report`, `/profile`, `/shop`…). Dibuktikan dgn repro minimal + harness middleware asli, lalu diperbaiki (`async (ctx, next)` + `return next()` saat tak menangani).
+
+### 12.3 Eval Gate — Satu Pintu
+
+| Script | Isi |
+|--------|-----|
+| **`npm test`** (`scripts/test-policy.mjs`) | 9 suite: mw-order · audit-rules (assert 8/8) · moderation · p1 · parameter · **admin** · simulate-abuse · personas · readiness. Child process terpisah per suite (DB tak saling cemari), exit 1 kalau ada fail |
+| `scripts/test-mw-order.mjs` (9 cek) | grammY **asli** (bukan fake bot): session+transformer API stub, entities command, key `chatId` — cek chain onboarding→chat→command + seluruh Paket A |
+| `scripts/test-admin.mjs` (11 cek) | Server admin asli di port acak: 401 tanpa/salah key, 200 dgn key, static build, health, 5 API inti, SSE 401. Hardened shutdown (`connection: close` + `closeAllConnections`) |
+| `scripts/bench-queue.mjs` | Micro-benchmark antrean (O(n²)→O(1)) |
+| `scripts/simulate-load.mjs` | Full-pipeline beban 100/1K/100K (lihat Benchmark.md §9) |
+
+### 12.4 Performance — Queue O(n²) Dihapus
+
+`pool.js` `waitingQueue`: `array.filter` O(n)/hapus → **`Set` O(1)** (insertion-order = FIFO terjaga).
+
+```
+addToPool 100K:  44.6s → 525ms   (85-94x, 190K-211K user/dtk)
+removeFromPool:  132ms utk 100K (800K user/dtk), residual 0
+```
+
+### 12.5 Sisa Terbuka (belum dikerjakan)
+
+| Item | Catatan |
+|------|---------|
+| `findMatch` lazy | `pool.js:157` masih bangun array kandidat penuh per panggilan → O(bucket)/panggilan (satu-satunya O(n²) tersisa; cocok dgn 829s fase match di sim 100K) |
+| Bracket fallback | `findMatch` sebaiknya derive `_ageBracket` dari `age` kalau kosong (produksi aman — onboarding selalu set — celah defensif saja) |
+| AI layer L1 | Model lokal utk intent keluar-pool — tunggu kasus lolos terukur (evidence sudah dikumpulkan) |
+| Pre-launch | Regen `BOT_TOKEN` · `npm run build:admin` · deploy VPS (Node 22 LTS, `npm ci`) · push origin |
+
+---
+
+*Last updated: 30 September 2026*

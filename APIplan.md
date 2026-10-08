@@ -50,7 +50,8 @@ Response: {
 - $0.003/call
 
 ### Status
-- ⏳ Membutuhkan behavioral NLP (P3)
+- ✅ **Context Parameter** (`src/services/context-parameter.js`) sudah jalan: 3 dimensi (keyword dataset / slang density / phone detection), skor 0-100 + verdict, EMA per user, **signal-only (tak ada auto-ban)** — fondasi langsung utk `estimate-age`
+- ⏳ Butuh agregasi `session_metrics` utk confidence behavioral (P3)
 
 ---
 
@@ -89,7 +90,8 @@ Response: {
 - $0.001/match
 
 ### Status
-- ✅ Bracket isolation sudah jadi di pool.js
+- ✅ Bracket isolation sudah jadi di pool.js — **terverifikasi audit**: bucket `language:bracket` terpisah, `checkAgeMatch` ikut bracket (R3), no cross-line 100%
+- ✅ `scripts/audit-rules.mjs` — bukti replayable (R2 8/8, R1 salah blokir 0)
 - ⏳ Butuh REST wrapper + API key auth
 
 ---
@@ -182,6 +184,8 @@ Response: {
 
 ### Status
 - ✅ Report + temp ban + trust level sudah jalan
+- ✅ **R2 interseksi penuh** (30 Sep 2026): `migration` + `personal_info` **diblokir diteruskan** di semua pool (teks + caption foto + kartu kontak), tak-didukung fail-closed + feedback — `checkViolation` adalah inti pipeline siap-API-kan
+- ✅ Leet normalization (`utils/leet.js`) + digitized lookalikes utk deteksi nomor tersamar
 - ⏳ Butuh REST wrapper + API key auth
 
 ---

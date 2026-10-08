@@ -95,18 +95,24 @@ Keputusan hanya menyangkut **lintas pool**, bukan gaya chat:
 | 2+ report (repeat offender) | ⛔ Temp ban 72 jam + 🚩 flagged permanen |
 
 ### Migration Violation (ajak keluar platform)
+
+> **Block-forward (30 Sep 2026):** pelanggaran kategori `migration`/`personal_info` **tidak pernah
+> sampai ke partner** — di semua pool, pada teks, **caption foto**, dan **kartu kontak**.
+> Warning + tangga sanksi tetap berjalan seperti tabel di bawah; pesannya sendiri dibuang
+> (`chat.js`/`media.js` → `logger.warn('exit_pool_blocked')`).
+
 | Pelanggaran | Kategori | Konsekuensi |
 |-------------|----------|-------------|
-| Share WA / IG / Line / Discord / Signal / Snapchat / TikTok / X / Telepon | `migration` | Peringatan 1/3 → 2/3 → 3/3 |
-| Ajakan ketemu / pindah platform / DM / CP | `migration` | ⛔ **Freeze 24 jam** di pelanggaran ke-3 |
-| @username / Telegram link | `migration` | Freeze 24 jam (3x) |
+| Share WA / IG / Line / Discord / Signal / Snapchat / TikTok / X / Telepon | `migration` | **Diblokir** + Peringatan 1/3 → 2/3 → 3/3 |
+| Ajakan ketemu / pindah platform / DM / CP | `migration` | **Diblokir** + ⛔ **Freeze 24 jam** di pelanggaran ke-3 |
+| @username / Telegram link | `migration` | **Diblokir** + Freeze 24 jam (3x) |
 
 ### Personal Info Violation
 | Pelanggaran | Kategori | Konsekuensi |
 |-------------|----------|-------------|
-| Nomor telepon | `personal_info` | Peringatan → **Auto-ban permanent** (3x) |
-| Credit card | `personal_info` | Auto-ban permanent (3x) |
-| Email | `personal_info` | Auto-ban permanent (3x) |
+| Nomor telepon | `personal_info` | **Diblokir** + Peringatan → **Auto-ban permanent** (3x) |
+| Credit card | `personal_info` | **Diblokir** + Auto-ban permanent (3x) |
+| Email | `personal_info` | **Diblokir** + Auto-ban permanent (3x) |
 
 ### Freeze vs Ban
 
@@ -128,7 +134,12 @@ Keputusan hanya menyangkut **lintas pool**, bukan gaya chat:
 > Jadi user baru: chat teks dulu; foto terbuka setelah 3 sesi, voice setelah verified dan tidak minor.
 
 - Foto: ❌ Video, ❌ GIF, ❌ Sticker
-- Voice: ✅ Adult (verified), ❌ Minor (semua)
+- **Caption foto dicek R2** — `checkViolation` pada caption; konten keluar-pool → foto **tidak diteruskan**
+- **Kartu kontak Telegram** → kena jalur `personal_info` (diblokir + warning)
+- Voice: ✅ Adult (verified), ❌ Minor (semua) — **file_id + pengirim dicatat ke evidence**
+  (voice tak ditranskripsi; batas ini diakui di `PRIVACY.md`)
+- **Tipe pesan tak didukung** (`video_note`, dokumen, lokasi, poll, dice, dll): fail-closed —
+  tidak diteruskan + user dapat feedback + tercatat di log
 - Semua foto disimpan di DB dengan anonymized ID (hanya admin)
 - Screenshot: tidak bisa dicegah secara teknis, tapi ada warning + konsekuensi
 
@@ -156,12 +167,22 @@ Keputusan hanya menyangkut **lintas pool**, bukan gaya chat:
 
 | Larangan | Deteksi | Konsekuensi |
 |----------|---------|-------------|
-| Share kontak (WA/IG/Line/DC/dll) | ✅ PII regex | Freeze 24 jam (3x) |
-| Ajakan ketemu fisik | ✅ PII regex | Freeze 24 jam (3x) |
-| Share nomor telepon | ✅ PII regex | Auto-ban permanent (3x) |
-| Share email | ✅ PII regex | Auto-ban permanent (3x) |
-| Share credit card | ✅ PII regex | Auto-ban permanent (3x) |
+| Share kontak (WA/IG/Line/DC/dll) | ✅ PII regex | **Tidak diteruskan** + Freeze 24 jam (3x) |
+| Ajakan ketemu fisik | ✅ PII regex | **Tidak diteruskan** + Freeze 24 jam (3x) |
+| Share nomor telepon | ✅ PII regex (termasuk leet/lookalike) | **Tidak diteruskan** + Auto-ban permanent (3x) |
+| Share email | ✅ PII regex | **Tidak diteruskan** + Auto-ban permanent (3x) |
+| Share credit card | ✅ PII regex | **Tidak diteruskan** + Auto-ban permanent (3x) |
+| Kartu kontak / caption foto berisi kontak | ✅ checkViolation | **Tidak diteruskan** + warning |
 | Video / GIF / Sticker | ✅ Media block | Langsung ditolak |
+| Tipe pesan tak didukung (video_note, dokumen, dll) | ✅ Catch-all | Fail-closed, tidak diteruskan |
+
+### Verifikasi (wajib jalan tiap kali rule diubah)
+
+```
+npm test            # 9 suite: audit-rules (R2 8/8) · mw-order · admin · moderation
+                    # · p1 · parameter · red-team abuse · personas EVICT · readiness
+npm run test:fast   # versi cepat (lewati simulasi berat)
+```
 
 ---
 
