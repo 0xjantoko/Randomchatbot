@@ -60,6 +60,17 @@ for (let i = 0; i < 5; i++) {
 ok('4. R3 isolasi bucket', found.length > 0 && found.every(b => b === 'minor'),
   `partners=[${found}] (harus semua 'minor')`);
 
+// 4b. P1.3 — DEFENSE-IN-DEPTH: suntik minor BUKAN ke bucket-nya sendiri.
+// Sebelum assertion (candidate._ageBracket !== bracket → skip), checkAgeMatch
+// lolos (masing-masing cek range diri sendiri) → cross-bracket MATCH. Kini null.
+const fake = { user_id: 911120, age: 15, gender: 'F', language: 'id',
+  _ageBracket: 'minor', gender_prefs: ['M', 'F'], location: 'ID' };
+pool.buckets.get('id:20s').set(911120, fake);
+pool.pool.set(911120, fake);
+const m4b = await pool.findMatch(mk(911103, 25));
+ok('4b. P1.3 suntik minor ke bucket dewasa → TIDAK match', m4b === null,
+  `match=${m4b ? `LEAK id=${m4b.user_id}` : 'null (fail-closed)'}`);
+
 // 5. R4: konstanta moderasi EVICT (drive penuh terekam di scripts/pov-adult.mjs 8/8)
 const modSrc = fs.readFileSync(path.join(ROOT, 'src/services/moderation.js'), 'utf8');
 const conf = /MIN_CONFIDENCE\s*=\s*([\d.]+)/.exec(modSrc)?.[1];
