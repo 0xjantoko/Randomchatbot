@@ -1,6 +1,15 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// P0.1 — fail-fast MIN_AGE. Kode tak punya default aman ('18' = Pool Minor
+// KOSONG diam-diam → R4 kehilangan objek tanpa error). Tanpa kunci ini di .env,
+// user 13-17 ditolak semua. .env.example menyediakan MIN_AGE=13.
+if (!process.env.MIN_AGE) {
+  console.error('⛔ FATAL: MIN_AGE tidak di-set di .env — Pool Minor (R4) tidak akan berfungsi.');
+  console.error('   Salin "MIN_AGE=13" dari .env.example, lalu restart.');
+  process.exit(1);
+}
+
 export default {
   // Bot Configuration
   BOT_TOKEN: process.env.BOT_TOKEN || '',

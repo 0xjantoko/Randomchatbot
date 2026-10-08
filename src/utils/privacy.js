@@ -141,7 +141,8 @@ export function checkPersonalInfo(text) {
     { pattern: /(sini|sana)\s*(wa|ig|line|tele|dc)/i, reason: 'ajakan pindah chat', category: 'migration' },
     { pattern: /dm\s*(aku|saya|gue|gw|sini|sana)/i, reason: 'ajakan DM', category: 'migration' },
     { pattern: /\bcp\b.*(wa|ig|line|tele)/i, reason: 'contact person', category: 'migration' },
-    { pattern: /(share|kirim|kirimkan)\s*(lokasi|location|titik)/i, reason: 'share lokasi', category: 'migration' }
+    { pattern: /(share|kirim|kirimkan)\s*(lokasi|location|titik)/i, reason: 'share lokasi', category: 'migration' },
+    { pattern: /(zoom|skype|telepon|telpon)|\b(call|tele)\s*(me|aku|saya|us|kita)\b/i, reason: 'ajakan call/telepon', category: 'migration' }
   ];
 
   // Kumpulkan SEMUA kategori yang match (bukan kategori pertama saja) —

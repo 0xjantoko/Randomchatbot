@@ -168,6 +168,25 @@ await bot.handleUpdate(mkUpdate('lanjut ngobrol normal'));
 const a6 = apiCalls.some(c => c.m === 'sendMessage' && c.args[0] === 888 && String(c.args[1]?.text ?? '').includes('lanjut ngobrol'));
 check('A6 teks setelah catch-all → tetap diteruskan', a6);
 
+// P1.5 — INVARIANT: argumen command (reason, args) tak boleh pernah masuk
+// ke pesan partner (guard statis — kasus nyata /report ditutup di 901da4d).
+{
+  const fs2 = await import('node:fs');
+  const dir = new URL('../src/handlers/', import.meta.url);
+  const files = fs2.readdirSync(dir).map(f => new URL(f, dir).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+  const leaked = [];
+  for (const f of files) {
+    const src = fs2.readFileSync(f, 'utf8');
+    const sendRe = /sendMessage\(\s*partnerId[\s\S]{0,400}?`([^`]*)`/g;
+    let m;
+    while ((m = sendRe.exec(src))) {
+      if (/\$\{(reason|args)\b/.test(m[1])) leaked.push(f.split(/[\\/]/).pop());
+    }
+  }
+  check('A7 invariant: argumen command tak bocor ke partner', leaked.length === 0);
+  if (leaked.length) console.log('DEBUG A7:', JSON.stringify(leaked));
+}
+
 console.log(`\n${pass} pass · ${fail} fail`);
 try { await sessionStorage.delete('777'); } catch (_) {}
 try { getDb().close(); } catch (_) {}

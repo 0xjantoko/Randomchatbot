@@ -37,6 +37,9 @@ export class PoolService {
     this.buckets = new Map();
     this.skipCooldowns = new Map();
     this.skipHistory = new Map();
+    // Hitung kandidat _priority per bucket — pass priority hanya dijalankan
+    // kalau benar ada isinya (P1.4 lazy findMatch).
+    this.priorityCounts = new Map();
     this._lock = Promise.resolve();
   }
 
@@ -130,6 +133,7 @@ export class PoolService {
         this.buckets.set(key, new Map());
       }
       this.buckets.get(key).set(user.user_id, sanitized);
+      if (isPriority) this.priorityCounts.set(key, (this.priorityCounts.get(key) || 0) + 1);
     } finally {
       release();
     }
@@ -141,6 +145,10 @@ export class PoolService {
       const key = this._bucketKey(user.language, user._ageBracket);
       const bucket = this.buckets.get(key);
       if (bucket) bucket.delete(userId);
+      if (user._priority) {
+        const c = (this.priorityCounts.get(key) || 0) - 1;
+        if (c > 0) this.priorityCounts.set(key, c); else this.priorityCounts.delete(key);
+      }
     }
     this.pool.delete(userId);
     this.waitingQueue.delete(userId);
@@ -164,21 +172,37 @@ export class PoolService {
       const bucket = this.buckets.get(key);
       if (!bucket || bucket.size === 0) return null;
 
-      const priorityCandidates = [];
-      const normalCandidates = [];
-      for (const [candidateId, candidate] of bucket) {
-        if (candidateId === user.user_id) continue;
-        (candidate._priority ? priorityCandidates : normalCandidates).push([candidateId, candidate]);
-      }
-
-      for (const [candidateId, candidate] of [...priorityCandidates, ...normalCandidates]) {
-        if (!this.checkGenderMatch(sanitizedUser, candidate)) continue;
-        if (!this.checkAgeMatch(sanitizedUser, candidate)) continue;
-        // Pool Minor hanya: jangan match ulang partner yang sama dalam rematchWindowMs
+      const tryCandidate = (candidateId, candidate) => {
+        if (candidateId === user.user_id) return null;
+        // P1.3 — anti cross-bracket fail-closed: isi bucket harus bracket yg
+        // sama. Pemisahan bucket adalah barrier utama; checkAgeMatch hanya
+        // mengecek range masing-masing (POV-adult #7), jadi assertion ini
+        // defense-in-depth bila bucket pernah tercampur.
+        if (candidate._ageBracket !== bracket) return null;
+        if (!this.checkGenderMatch(sanitizedUser, candidate)) return null;
+        if (!this.checkAgeMatch(sanitizedUser, candidate)) return null;
+        // Pool Minor: jangan match ulang partner sama dalam rematchWindowMs
         if (bracket === 'minor' || candidate._ageBracket === 'minor') {
-          if (hasRecentMatch(hashPairId(user.user_id, candidateId), this.rematchWindowMs)) continue;
+          if (hasRecentMatch(hashPairId(user.user_id, candidateId), this.rematchWindowMs)) return null;
         }
         return { ...candidate, _matchedWithPriority: candidate._priority };
+      };
+
+      // P1.4 — lazy 2-pass TANPA membangun array kandidat penuh (array build
+      // = O(bucket)/panggilan → O(n²) agregat; terukur 829s fase match @100K).
+      // Pass priority hanya kalau bucket memang punya isinya (priorityCounts),
+      // lalu stop di kandidat pertama yg lolos → O(1) rata-rata.
+      if ((this.priorityCounts.get(key) || 0) > 0) {
+        for (const [candidateId, candidate] of bucket) {
+          if (!candidate._priority) continue;
+          const m = tryCandidate(candidateId, candidate);
+          if (m) return m;
+        }
+      }
+      for (const [candidateId, candidate] of bucket) {
+        if (candidate._priority) continue;
+        const m = tryCandidate(candidateId, candidate);
+        if (m) return m;
       }
       return null;
     } finally {
