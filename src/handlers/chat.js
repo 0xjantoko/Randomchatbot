@@ -43,11 +43,14 @@ export function registerChatHandlers(bot, { sessionService, xpService, achieveme
       return;
     }
 
-    if (violations.length > 0) {
+    // R2 — INTERSEPSI: keluar-pool (ketemu/kontak/sosmed) TIDAK boleh sampai ke partner.
+    // Warning tetap dikirim, freeze/strike tetap berjalan di checkViolation, tapi pesan DIBLOKIR
+    // di semua pool. Konten intra-pool (vulgar dsb) lolos tanpa sensor (R1).
+    const exitPoolCategories = new Set(['migration', 'personal_info']);
+    if (violations.length > 0 && violations.some(v => exitPoolCategories.has(v.category))) {
       try {
         const specificWarning = getMigrationWarning(violations[0]?.reason?.replace('Menyertakan ', '') || '');
 
-        // Check migration freeze status
         let freezeWarning = '';
         const isMigration = violations.some(v => v.category === 'migration' || v.type === 'migration');
         if (isMigration) {
@@ -60,6 +63,19 @@ export function registerChatHandlers(bot, { sessionService, xpService, achieveme
 
         await ctx.reply(
           t(ctx, 'chat.warning', { violations: violations.map(v => v.reason).join(', ') }) + '\n\n' + specificWarning + freezeWarning,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (e) {}
+      logger.warn('exit_pool_blocked', { userId, to: partnerId, reasons: violations.map(v => v.category) });
+      return;
+    }
+
+    if (violations.length > 0) {
+      // Kategori lain (di luar migration/personal_info) — warning biasa, tetap diteruskan
+      try {
+        const specificWarning = getMigrationWarning(violations[0]?.reason?.replace('Menyertakan ', '') || '');
+        await ctx.reply(
+          t(ctx, 'chat.warning', { violations: violations.map(v => v.reason).join(', ') }) + '\n\n' + specificWarning,
           { parse_mode: 'Markdown' }
         );
       } catch (e) {}
