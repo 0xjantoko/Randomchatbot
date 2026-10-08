@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "build:admin": "vite build",
-    "dev:admin": "vite dev --root src/admin/frontend"
+    "dev:admin": "vite dev --root src/admin/frontend",
+    "test": "node scripts/test-policy.mjs",
+    "test:fast": "node scripts/test-policy.mjs --fast"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
