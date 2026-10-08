@@ -105,11 +105,14 @@ export function checkPersonalInfo(text) {
   const lower = text.toLowerCase();
   // Anti-leet: 08l234567890 → 081234567890 sebelum regex digit
   const digitized = digitizeLookalikes(text);
+  // Anti-bypass (POV-evader): strip SEMUA non-digit → "0812.3456.7890",
+  // "62 812 3456 7890", "0 8 1 2 3 4 5 6 7 8 9 0" tetap kena regex HP/kartu.
+  const digitsOnly = text.replace(/[^\d+]/g, '');
 
   // Sensitive personal data (high risk) → personal_info category
   const sensitivePatterns = [
-    { pattern: /(\+62|62|0)\d{8,15}/, reason: 'phone number', category: 'personal_info', useDigitized: true },
-    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card', category: 'personal_info', useDigitized: true },
+    { pattern: /(\+62|62|0)\d{8,15}/, reason: 'phone number', category: 'personal_info', useDigitized: true, useDigitsOnly: true },
+    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card', category: 'personal_info', useDigitized: true, useDigitsOnly: true },
     { pattern: /email\b|e-mail|@\w+\.(com|co\.id|net|org|id)/i, reason: 'email', category: 'personal_info' }
   ];
 
@@ -125,21 +128,25 @@ export function checkPersonalInfo(text) {
     { pattern: /signal|signal\.|signal saya|signal aku/i, reason: 'Signal', category: 'migration' },
     { pattern: /snapchat|snap\.|sc saya|sc aku|snap gw/i, reason: 'Snapchat', category: 'migration' },
     { pattern: /tiktok|tt\.|tt saya|tt aku|tt gw/i, reason: 'TikTok', category: 'migration' },
-    { pattern: /twitter|x\.com|twit/i, reason: 'X / Twitter', category: 'migration' }
+    { pattern: /twitter|x\.com|twit/i, reason: 'X / Twitter', category: 'migration' },
+    { pattern: /telegram|tele\.me/i, reason: 'Telegram', category: 'migration' }
   ];
 
   // "Ajak keluar" phrases → migration category
   const invitePatterns = [
-    { pattern: /(ketemu|temuan|kopi.?yuk|ngopi|main.?ke|datang.?ke|janjian|meetup)/i, reason: 'ajakan ketemu', category: 'migration' },
+    { pattern: /(ketemu|temuan|kopi.?yuk|kopi.?dulu|kopi.?aja|ngopi|main.?ke|datang.?ke|janjian|meetup|meet\s*irl)/i, reason: 'ajakan ketemu', category: 'migration' },
     { pattern: /(pindah|lanjut|move|lanjutin)\s.*(wa|ig|tele|line|dc|discord|chat)/i, reason: 'ajakan pindah platform', category: 'migration' },
     { pattern: /(wa|ig|line|dc|tele|email).*(aku|saya|gue|gw)/i, reason: 'share kontak', category: 'migration' },
     { pattern: /(sini|sana)\s*(wa|ig|line|tele|dc)/i, reason: 'ajakan pindah chat', category: 'migration' },
-    { pattern: /dm\s*(aku|saya|gue|gw)/i, reason: 'ajakan DM', category: 'migration' },
-    { pattern: /\bcp\b.*(wa|ig|line|tele)/i, reason: 'contact person', category: 'migration' }
+    { pattern: /dm\s*(aku|saya|gue|gw|sini|sana)/i, reason: 'ajakan DM', category: 'migration' },
+    { pattern: /\bcp\b.*(wa|ig|line|tele)/i, reason: 'contact person', category: 'migration' },
+    { pattern: /(share|kirim|kirimkan)\s*(lokasi|location|titik)/i, reason: 'share lokasi', category: 'migration' }
   ];
 
-  for (const { pattern, reason, category, useDigitized } of sensitivePatterns) {
-    if (pattern.test(text) || (useDigitized && pattern.test(digitized))) {
+  for (const { pattern, reason, category, useDigitized, useDigitsOnly } of sensitivePatterns) {
+    if (pattern.test(text)
+      || (useDigitized && pattern.test(digitized))
+      || (useDigitsOnly && pattern.test(digitsOnly))) {
       return { safe: false, reason, category };
     }
   }

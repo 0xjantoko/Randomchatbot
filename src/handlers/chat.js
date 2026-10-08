@@ -210,11 +210,13 @@ export function registerChatHandlers(bot, { sessionService, xpService, achieveme
       const partnerProfile = session.user_a === partnerId ? session.profile_a : session.profile_b;
       const partnerLang = partnerProfile?.language || 'id';
       await bot.api.sendMessage(partnerId,
-        `⚠️ Kamu terkena *temp-ban 24 jam* karena laporan dari partner.\n\n` +
-        `Alasan: ${reason}\n` +
+        `⚠️ Kamu terkena *temp-ban 24 jam* karena laporan dari partner.\n` +
         (isUnderageReport ? `\n🚩 Akun kamu ditandai untuk review admin.` : ''),
         { parse_mode: 'Markdown' }
       );
+      // Alasan mentah TIDAK dikirim ke partner (POV-evader #34: reason bisa
+      // berisi nomor/ajakan = leak R2 lewat jalur command). Alasan tetap ada
+      // di log/admin via logger.warn di atas.
     } catch (e) {}
 
     console.log(`🚨 Report: User ${userId} reported ${partnerId} - ${reason} (report #${reportCount + 1})`);
