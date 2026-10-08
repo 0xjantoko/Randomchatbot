@@ -233,7 +233,8 @@ const AGE_REFERENCES = {
 function scoreBracket(profile, ref) {
   if (profile.totalMessages < 3) return null;
 
-  const avgLen = profile.totalLength / profile.totalWords || 0;
+  // Rata-rata panjang pesan (karakter/pesan) — bandingkan dengan range avgMsgLength
+  const avgLen = profile.totalMessages > 0 ? profile.totalLength / profile.totalMessages : 0;
   const typoRate = profile.typoCount / profile.totalMessages;
   const emojiRate = profile.emojiCount / profile.totalMessages;
   const slangRatio = profile.slangHits / profile.totalWords;

@@ -181,12 +181,15 @@ export class PoolService {
   }
 
   checkAgeMatch(userA, userB) {
-    const aMin = userA.age_min || 18;
-    const aMax = userA.age_max || 99;
-    const bMin = userB.age_min || 18;
-    const bMax = userB.age_max || 99;
-    return (userA.age >= aMin && userA.age <= aMax &&
-            userB.age >= bMin && userB.age <= bMax);
+    // Default mengikuti bracket (bukan 18 — pool minor harus match sesama minor)
+    const range = (u) => {
+      const b = AGE_BRACKETS[u._ageBracket];
+      return { min: u.age_min ?? b?.min ?? 18, max: u.age_max ?? b?.max ?? 99 };
+    };
+    const a = range(userA);
+    const b = range(userB);
+    return (userA.age >= a.min && userA.age <= a.max &&
+            userB.age >= b.min && userB.age <= b.max);
   }
 
   getPoolSize() { return this.pool.size; }
