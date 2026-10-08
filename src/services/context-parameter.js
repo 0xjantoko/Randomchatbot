@@ -93,8 +93,10 @@ export function evaluateText(text) {
   if (slangHits.length) hits.slang = slangHits;
   const slangScore = words.length ? (slangHits.length / words.length) * 100 : 0;
 
-  // 3. Nomor HP
-  const phoneHit = PHONE_PATTERNS.some(p => p.test(text) || p.test(digitized));
+  // 3. Nomor HP — termasuk varian berspasi/titik ("0812.3456.7890", "62 812 3456 7890")
+  //     — sinkron dgn anti-bypass digitsOnly di utils/privacy.js (POV-evader #4/#6/#10)
+  const digitsOnly = text.replace(/[^\d+]/g, '');
+  const phoneHit = PHONE_PATTERNS.some(p => p.test(text) || p.test(digitized) || p.test(digitsOnly));
   if (phoneHit) hits.phone = true;
 
   // Skor dimensi 0-100

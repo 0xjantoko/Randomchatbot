@@ -135,6 +135,7 @@ export function checkPersonalInfo(text) {
   // "Ajak keluar" phrases → migration category
   const invitePatterns = [
     { pattern: /(ketemu|temuan|kopi.?yuk|kopi.?dulu|kopi.?aja|ngopi|main.?ke|datang.?ke|janjian|meetup|meet\s*irl)/i, reason: 'ajakan ketemu', category: 'migration' },
+    { pattern: /(?<!nice to\s)\bmeet\s+(at|us|up|me|there|here|tomorrow|tonight)\b/i, reason: 'ajakan ketemu', category: 'migration' },
     { pattern: /(pindah|lanjut|move|lanjutin)\s.*(wa|ig|tele|line|dc|discord|chat)/i, reason: 'ajakan pindah platform', category: 'migration' },
     { pattern: /(wa|ig|line|dc|tele|email).*(aku|saya|gue|gw)/i, reason: 'share kontak', category: 'migration' },
     { pattern: /(sini|sana)\s*(wa|ig|line|tele|dc)/i, reason: 'ajakan pindah chat', category: 'migration' },
