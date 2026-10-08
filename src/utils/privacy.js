@@ -144,27 +144,38 @@ export function checkPersonalInfo(text) {
     { pattern: /(share|kirim|kirimkan)\s*(lokasi|location|titik)/i, reason: 'share lokasi', category: 'migration' }
   ];
 
+  // Kumpulkan SEMUA kategori yang match (bukan kategori pertama saja) —
+  // POV-minor #2: pesan campuran "0812... ketemu" harus memicu JUGA freeze
+  // migration di minor pool, bukan hanya personal_info strike.
+  const found = [];
+  const push = (reason, category) => {
+    if (!found.some(f => f.reason === reason && f.category === category)) found.push({ reason, category });
+  };
+
   for (const { pattern, reason, category, useDigitized, useDigitsOnly } of sensitivePatterns) {
     if (pattern.test(text)
       || (useDigitized && pattern.test(digitized))
       || (useDigitsOnly && pattern.test(digitsOnly))) {
-      return { safe: false, reason, category };
+      push(reason, category);
     }
   }
 
   for (const { pattern, reason, category } of platformPatterns) {
     if (pattern.test(text)) {
-      return { safe: false, reason, category };
+      push(reason, category);
     }
   }
 
   for (const { pattern, reason, category } of invitePatterns) {
     if (pattern.test(lower)) {
-      return { safe: false, reason, category };
+      push(reason, category);
     }
   }
-  
-  return { safe: true, category: null };
+
+  if (!found.length) return { safe: true, category: null };
+  // `category`/`reason` pertama = prioritas (kompatibel dgn pemanggil lama);
+  // `all` = daftar lengkap utk enforcement multi-kategori.
+  return { safe: false, reason: found[0].reason, category: found[0].category, all: found };
 }
 
 export function getMigrationWarning(reason) {

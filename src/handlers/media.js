@@ -488,12 +488,23 @@ export function checkViolation(userId, content, contentType = 'text', options = 
   
   const safety = checkPersonalInfo(content);
   if (!safety.safe) {
-    violations.push({
-      type: safety.category || 'personal_info',
-      reason: `Menyertakan ${safety.reason}`,
-      details: content.substring(0, 50),
-      category: safety.category || 'personal_info'
-    });
+    // Pecah SEMUA kategori (migration + personal_info dst) supaya enforcement
+    // per-kategori jalan semua: freeze migration + auto-ban personal_info.
+    // DEDUPE: 1 pesan = maks 1 strike per kategori (bukan per pola regex —
+    // "wa aku 0812..." memuat 2 pola migration, tak boleh dihitung 2x).
+    const hits = safety.all || [{ reason: safety.reason, category: safety.category }];
+    const seenCats = new Set();
+    for (const h of hits) {
+      const cat = h.category || 'personal_info';
+      if (seenCats.has(cat)) continue;
+      seenCats.add(cat);
+      violations.push({
+        type: cat,
+        reason: `Menyertakan ${h.reason}`,
+        details: content.substring(0, 50),
+        category: cat
+      });
+    }
   }
   
   // Log violations — personal_info leads to auto-ban, migration leads to freeze
