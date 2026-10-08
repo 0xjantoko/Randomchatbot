@@ -132,11 +132,12 @@ export function registerGamificationHandlers(bot, { config, xpService, achieveme
   console.log('✅ Gamification handlers registered');
 }
 
-export async function notifyAchievements(bot, userId, achievements, lang = 'id') {
+export async function notifyAchievements(api, userId, achievements, lang = 'id') {
   if (!achievements || achievements.length === 0) return;
   for (const ach of achievements) {
     try {
-      await bot.api.sendMessage(userId,
+      await api.sendMessage(
+        userId,
         tLang(lang, 'gamification.achievement_unlock', { icon: ach.icon, name: ach.name, desc: ach.desc }),
         { parse_mode: 'Markdown' }
       );
@@ -146,13 +147,15 @@ export async function notifyAchievements(bot, userId, achievements, lang = 'id')
   }
 }
 
-export async function notifyLevelUp(bot, userId, xpResult, lang = 'id') {
+export async function notifyLevelUp(api, userId, xpResult, lang = 'id') {
   if (!xpResult || !xpResult.levelUp) return;
   let msg = tLang(lang, 'gamification.level_up', { level: xpResult.level });
   if (xpResult.newPerks) {
     msg += tLang(lang, 'gamification.perk_unlock', { name: xpResult.newPerks.name, desc: xpResult.newPerks.description });
   }
   try {
-    await bot.api.sendMessage(userId, msg, { parse_mode: 'Markdown' });
-  } catch (e) {}
+    await api.sendMessage(userId, msg, { parse_mode: 'Markdown' });
+  } catch (e) {
+    console.error('Level-up notification error:', e.message);
+  }
 }

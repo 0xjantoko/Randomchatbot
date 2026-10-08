@@ -6,6 +6,21 @@ import {
   setDailyReward as dbSetDailyReward
 } from '../database/db.js';
 
+// Kolom yang boleh di-upsert di user_profiles (guard terhadap field tak dikenal)
+const PROFILE_FIELDS = new Set([
+  'xp', 'level', 'streak_days', 'total_sessions', 'total_messages', 'total_photos',
+  'total_referrals', 'unlocked_features', 'trust_level', 'age_verified', 'sessions_completed'
+]);
+
+function updateProfile(userId, updates) {
+  const safe = {};
+  for (const [k, v] of Object.entries(updates)) {
+    if (PROFILE_FIELDS.has(k)) safe[k] = v;
+  }
+  if (Object.keys(safe).length === 0) return;
+  dbUpdateUserProfile(userId, safe);
+}
+
 const XP_SOURCES = {
   message: { amount: 2, dailyMax: 50, key: 'messages_count' },
   photo: { amount: 5, dailyMax: 20, key: 'photos_sent' },
@@ -79,28 +94,39 @@ class XPService {
     const sourceDef = XP_SOURCES[source];
     if (!sourceDef) return null;
 
+    const profile = this.ensureProfile(userId);
+
+    // Counter stat naik terus meski XP harian cap — achievement tak boleh terblokir
+    const counters = {};
+    if (source === 'message') counters.total_messages = (profile.total_messages || 0) + 1;
+    if (source === 'photo') counters.total_photos = (profile.total_photos || 0) + 1;
+    if (source === 'session') counters.total_sessions = (profile.total_sessions || 0) + 1;
+
+    let capped = false;
     if (sourceDef.dailyMax !== null) {
       const today = new Date().toISOString().slice(0, 10);
       const cacheKey = `${userId}:${source}:${today}`;
       const used = this.dailyXpCache.get(cacheKey) || 0;
-      if (used >= sourceDef.dailyMax) return null;
+      capped = used >= sourceDef.dailyMax;
     }
 
-    const profile = this.ensureProfile(userId);
+    if (capped) {
+      updateProfile(userId, counters);
+      return null;
+    }
+
     const baseAmount = source === 'streak_bonus'
-      ? 5 * (profile.streak_days || 0)
+      ? 5 * (dbGetDailyReward(userId)?.streak_count || 0)
       : sourceDef.amount;
     const amount = baseAmount * multiplier;
 
     const prevLevel = calcLevel(profile.xp);
     const newXp = profile.xp + amount;
 
-    dbUpdateUserProfile(userId, {
+    updateProfile(userId, {
       xp: newXp,
       level: calcLevel(newXp),
-      total_messages: source === 'message' ? (profile.total_messages || 0) + 1 : profile.total_messages,
-      total_photos: source === 'photo' ? (profile.total_photos || 0) + 1 : profile.total_photos,
-      total_sessions: source === 'session' ? (profile.total_sessions || 0) + 1 : profile.total_sessions
+      ...counters
     });
 
     if (sourceDef.dailyMax !== null) {
@@ -142,6 +168,8 @@ class XPService {
     }
 
     dbSetDailyReward(userId, today, streak);
+    // Sinkronkan streak ke profile supaya /profile & badge konsisten
+    updateProfile(userId, { streak_days: streak });
     return { streak, alreadyClaimed: false, usedFreeze };
   }
 
@@ -168,11 +196,14 @@ class XPService {
       if (LEVEL_PERKS[i]) unlockedPerks.push({ level: i, ...LEVEL_PERKS[i] });
     }
 
+    // streak asli dari daily_rewards (streak_days di profile = cache tampilan)
+    const streak = dbGetDailyReward(userId)?.streak_count || profile.streak_days || 0;
+
     return {
       ...profile,
       ...progress,
       unlockedPerks,
-      streak: profile.streak_days || 0
+      streak
     };
   }
 
