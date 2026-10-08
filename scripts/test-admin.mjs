@@ -36,7 +36,7 @@ const check = (label, cond, detail = '') => {
 
 const get = async (p, key) => {
   try {
-    const r = await fetch(base + p, { headers: key ? { 'x-api-key': key } : {} });
+    const r = await fetch(base + p, { headers: { ...(key ? { 'x-api-key': key } : {}), connection: 'close' } });
     return { status: r.status, body: await r.text() };
   } catch (e) { return { status: 0, body: e.message }; }
 };
@@ -72,7 +72,7 @@ r = await get('/admin/api/traffic/stream');
 check('SSE stream tanpa key → 401', r.status === 401, `got ${r.status}`);
 
 console.log(`\n${pass} pass · ${fail} fail`);
-try { server.close(); } catch (_) {}
+try { server.closeAllConnections?.(); server.close(); } catch (_) {}
 try {
   const { getDb } = await import('../src/database/db.js');
   getDb().close();

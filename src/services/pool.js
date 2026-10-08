@@ -29,7 +29,9 @@ const COOLDOWN_CLEANUP_DELAY = 40000; // bersihin state setelah 40 detik
 export class PoolService {
   constructor() {
     this.pool = new Map();
-    this.waitingQueue = [];
+    // Set (insertion-order = FIFO) — array+filter O(n) per hapus → O(n²) agregat.
+    // Terbukti di simulasi 100K: addToPool 44.6s; dengan Set menjadi O(1)/op.
+    this.waitingQueue = new Set();
     // Pool Minor: partner sama tidak boleh di-match ulang dalam N jam (putus kesinambungan grooming)
     this.rematchWindowMs = (config.MINOR_REMATCH_HOURS || 24) * 3600_000;
     this.buckets = new Map();
@@ -111,7 +113,7 @@ export class PoolService {
       sanitized._priority = isPriority;
       sanitized._ageBracket = getAgeBracket(user.age) || '20s';
       this.pool.set(user.user_id, sanitized);
-      this.waitingQueue.push(user.user_id);
+      this.waitingQueue.add(user.user_id);
 
       const key = this._bucketKey(sanitized.language, sanitized._ageBracket);
       if (!this.buckets.has(key)) {
@@ -131,7 +133,7 @@ export class PoolService {
       if (bucket) bucket.delete(userId);
     }
     this.pool.delete(userId);
-    this.waitingQueue = this.waitingQueue.filter(id => id !== userId);
+    this.waitingQueue.delete(userId);
   }
 
   async removeFromPool(userId) {
