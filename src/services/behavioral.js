@@ -1,4 +1,5 @@
 import { flagUserUnderage, updateUserProfile } from '../database/db.js';
+import { normalizeLeet } from '../utils/leet.js';
 
 const INDONESIAN_SLANG = [
   'gw', 'gue', 'lu', 'lo', 'elo', 'gua',
@@ -167,15 +168,18 @@ export function extractFeatures(text, profile) {
   if (questions) profile.questionCount += questions.length;
 
   for (const word of words) {
-    const w = word.toLowerCase().replace(/[^a-z]/g, '');
+    // Leet normalization: k3l4s→kelas, krj4→krj — kamus tetap bisa dicocokkan
+    const w = normalizeLeet(word).toLowerCase().replace(/[^a-z]/g, '');
     if (INDONESIAN_SLANG.includes(w)) profile.slangHits++;
     if (SCHOOL_VOCAB.includes(w)) profile.schoolVocabHits++;
     if (ADULT_VOCAB.includes(w)) profile.adultVocabHits++;
   }
 
+  // Grooming: cocok di teks mentah DAN teks ternormalisasi (r4h4s14 → rahasia)
   const lowerText = text.toLowerCase();
+  const normalizedText = normalizeLeet(lowerText);
   for (const signal of GROOMING_SIGNALS) {
-    if (lowerText.includes(signal)) {
+    if (lowerText.includes(signal) || normalizedText.includes(signal)) {
       profile.groomingSignalHits++;
     }
   }

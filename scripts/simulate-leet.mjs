@@ -219,4 +219,11 @@ D. Filter konten seks  : TIDAK ADA (kata seks normal maupun leet lolos — sesua
 `);
 
 try { getDb().close(); } catch (_) {}
+// DB simulasi = stateless: hapus supaya run berikutnya bersih
+try {
+  const fs = await import('node:fs');
+  for (const f of [process.env.DB_PATH, `${process.env.DB_PATH}-journal`]) {
+    if (f && fs.existsSync(f)) fs.unlinkSync(f);
+  }
+} catch (_) {}
 process.exit(0);

@@ -7,8 +7,12 @@ import { t, tLang } from '../locales/index.js';
 import { notifyAchievements, notifyLevelUp } from './gamification.js';
 import { extractFeatures, getProfile } from '../services/behavioral.js';
 import { enforceBracketBreach } from '../services/moderation.js';
+import { ContextParameter } from '../services/context-parameter.js';
 import { recordMessage as recordEvidence } from '../services/evidence.js';
 import { getMigrationWarning } from '../utils/privacy.js';
+
+/** Penilaian konteks percakapan per user (kata kunci + slang + no HP) */
+export const contextParameter = new ContextParameter();
 
 export function registerChatHandlers(bot, { sessionService, xpService, achievementService, poolService }) {
   bot.on('message:text', async (ctx) => {
@@ -73,6 +77,14 @@ export function registerChatHandlers(bot, { sessionService, xpService, achieveme
 
       const profile = getProfile(userId);
       extractFeatures(text, profile);
+
+      // Context Parameter: nilai konteks pesan (signal untuk review, bukan auto-ban)
+      try {
+        const ctxParam = contextParameter.record(userId, text);
+        if (ctxParam.total >= 70) {
+          logger.warn('context_critical', { userId, score: ctxParam.total, flags: ctxParam.flags });
+        }
+      } catch (_) {}
 
       // Enforce bracket-breach real-time: hentikan sesi + karantina/ratchet (bukan sekadar flag)
       if (profile.totalMessages >= 3) {

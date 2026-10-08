@@ -5,6 +5,7 @@
 
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { digitizeLookalikes } from './leet.js';
 dotenv.config();
 
 const HASH_SECRET = process.env.HASH_SECRET;
@@ -102,11 +103,13 @@ export function sanitizeUser(user) {
  */
 export function checkPersonalInfo(text) {
   const lower = text.toLowerCase();
+  // Anti-leet: 08l234567890 → 081234567890 sebelum regex digit
+  const digitized = digitizeLookalikes(text);
 
   // Sensitive personal data (high risk) → personal_info category
   const sensitivePatterns = [
-    { pattern: /(\+62|62|0)\d{8,15}/, reason: 'phone number', category: 'personal_info' },
-    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card', category: 'personal_info' },
+    { pattern: /(\+62|62|0)\d{8,15}/, reason: 'phone number', category: 'personal_info', useDigitized: true },
+    { pattern: /\d{4}[-\s]?\d{4}[-\s]?\d{4}/, reason: 'credit card', category: 'personal_info', useDigitized: true },
     { pattern: /email\b|e-mail|@\w+\.(com|co\.id|net|org|id)/i, reason: 'email', category: 'personal_info' }
   ];
 
@@ -135,8 +138,8 @@ export function checkPersonalInfo(text) {
     { pattern: /\bcp\b.*(wa|ig|line|tele)/i, reason: 'contact person', category: 'migration' }
   ];
 
-  for (const { pattern, reason, category } of sensitivePatterns) {
-    if (pattern.test(text)) {
+  for (const { pattern, reason, category, useDigitized } of sensitivePatterns) {
+    if (pattern.test(text) || (useDigitized && pattern.test(digitized))) {
       return { safe: false, reason, category };
     }
   }
